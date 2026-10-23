@@ -402,4 +402,20 @@ describe('ruleSchema 步骤约束', () => {
     const step = res.success ? res.data.steps[0] : undefined;
     expect(step?.type === 'handoff' && step.until).toMatchObject({ kind: 'element', filled: true });
   });
+
+  it('element 条件接受正整数 minLength，拒绝 0 与小数', () => {
+    const make = (minLength: number) =>
+      parse({
+        steps: [
+          {
+            id: 'a',
+            type: 'assert',
+            condition: { kind: 'element', target: css('#c'), minLength },
+          },
+        ],
+      }).success;
+    expect(make(5)).toBe(true);
+    expect(make(0)).toBe(false);
+    expect(make(2.5)).toBe(false);
+  });
 });

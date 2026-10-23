@@ -451,6 +451,8 @@ async function fillRecording(box, id, reload) {
   const urls = ta('urls'),
     exclude = ta('exclude');
   urls.placeholder = '留空则从录制里的页面地址推断';
+  const captchaLen = h('input', { type: 'number', name: 'captchaLength', min: '1', max: '20' });
+  captchaLen.placeholder = '留空：输入框填满（达到它的 maxlength）就继续';
   const trigger = h(
     'select',
     { name: 'trigger' },
@@ -480,6 +482,7 @@ async function fillRecording(box, id, reload) {
       inputMode: mode.value,
     };
     if (idIn.value.trim()) body.id = idIn.value.trim();
+    if (captchaLen.value) body.captchaLength = Number(captchaLen.value);
     const matchUrls = lines(urls);
     if (matchUrls.length) body.urls = matchUrls;
     const ex = lines(exclude);
@@ -517,6 +520,7 @@ async function fillRecording(box, id, reload) {
       field('规则 ID', idIn),
       field('匹配网址（每行一条）', urls),
       field('排除网址（每行一条，可空）', exclude),
+      field('验证码位数（可空）', captchaLen),
       field('触发方式', trigger),
       field('输入方式', mode),
       sharedCb,

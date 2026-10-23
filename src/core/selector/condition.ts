@@ -17,6 +17,10 @@ function isFilled(el: Element): boolean {
   return max > 0 ? el.value.length >= max : el.value.length > 0;
 }
 
+function hasMinLength(el: Element, min: number): boolean {
+  return (isInput(el) || isTextarea(el)) && el.value.length >= min;
+}
+
 /**
  * 在当前 frame 内判断条件。
  * 经过跨域 iframe 的元素条件视为不成立。
@@ -36,6 +40,7 @@ export function evaluateCondition(c: Condition): boolean {
       if (!element) return false;
       if (c.visible && !isVisible(element)) return false;
       if (c.filled && !isFilled(element)) return false;
+      if (c.minLength !== undefined && !hasMinLength(element, c.minLength)) return false;
       const text = textOf(element);
       if (c.text !== undefined && !text.includes(c.text)) return false;
       if (c.textMatch !== undefined) {

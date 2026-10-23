@@ -51,7 +51,7 @@ def _walk_steps(steps: list[Any]):
                 yield from _walk_steps(nested)
 
 
-def captchas_to_handoff(steps: list[Any]) -> list[Any]:
+def captchas_to_handoff(steps: list[Any], min_length: int | None = None) -> list[Any]:
     """把录制里“用凭据填写验证码输入框”的步骤改成交还给用户的步骤。
 
     扩展录制时会把验证码等敏感输入替换成 `{{secret.<字段名>}}`，但验证码每次都不同，
@@ -75,7 +75,11 @@ def captchas_to_handoff(steps: list[Any]) -> list[Any]:
             if isinstance(target, dict):
                 # 输入框填满（有 maxlength 时达到它，否则非空）就自动继续；侧边栏的「继续」按钮仍可手动继续
                 handoff["resumeWhen"] = "condition"
-                handoff["until"] = {"kind": "element", "target": target, "filled": True}
+                if min_length:
+                    # 验证码实际位数与输入框的 maxlength 不一致时，用明确的位数判断
+                    handoff["until"] = {"kind": "element", "target": target, "minLength": min_length}
+                else:
+                    handoff["until"] = {"kind": "element", "target": target, "filled": True}
             if isinstance(s.get("note"), str):
                 handoff["note"] = s["note"]
             out.append(handoff)
@@ -83,7 +87,7 @@ def captchas_to_handoff(steps: list[Any]) -> list[Any]:
         converted = dict(s)
         for key in ("then", "else", "steps"):
             if isinstance(s.get(key), list):
-                converted[key] = captchas_to_handoff(s[key])
+                converted[key] = captchas_to_handoff(s[key], min_length)
         out.append(converted)
     return out
 
@@ -307,7 +311,12 @@ def make_router() -> APIRouter:
         db: Database = request.app.state.db
         recording = _get(db, RECORDINGS, p, recording_id)
         steps = recording.get("steps") if isinstance(recording.get("steps"), list) else []
-        steps = captchas_to_handoff(steps)
+        captcha_length = body.get("captchaLength")
+        if captcha_length is not None and (
+            isinstance(captcha_length, bool) or not isinstance(captcha_length, int) or not 1 <= captcha_length <= 20
+        ):
+            return _invalid(["captchaLength: 需要 1 到 20 的整数"])
+        steps = captchas_to_handoff(steps, captcha_length)
         name = body.get("name")
         rule_id = body.get("id")
         # 只需要名称：id 与匹配网站留空时自动生成 / 从录制推断

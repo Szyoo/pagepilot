@@ -47,6 +47,27 @@ describe('element 条件的 filled（输入框已填满）', () => {
   });
 });
 
+describe('element 条件的 minLength（至少几个字符）', () => {
+  it('验证码实际是 5 位而输入框 maxlength 是 6：输满 5 位就成立，filled 则要 6 位', () => {
+    html('<input id="c" maxlength="6">');
+    mockLayout();
+    const input = $('#c') as HTMLInputElement;
+    input.value = '1234';
+    expect(evaluateCondition(el('#c', { minLength: 5 }))).toBe(false);
+    input.value = '12345';
+    expect(evaluateCondition(el('#c', { minLength: 5 }))).toBe(true);
+    expect(evaluateCondition(el('#c', { filled: true }))).toBe(false);
+    input.value = '123456';
+    expect(evaluateCondition(el('#c', { filled: true }))).toBe(true);
+  });
+
+  it('目标不是输入框时不成立', () => {
+    html('<div id="d">12345</div>');
+    mockLayout();
+    expect(evaluateCondition(el('#d', { minLength: 1 }))).toBe(false);
+  });
+});
+
 describe('element 条件', () => {
   it('元素不存在时不成立', () => {
     mockLayout();

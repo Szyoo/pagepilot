@@ -121,13 +121,19 @@ export class RecordingSession {
         break;
       case 'fill': {
         if (action.sensitive && USER_INPUT_FIELD.test(action.fieldName)) {
-          // 输入框填满（有 maxlength 时达到它，否则非空）就自动继续，侧边栏的「继续」仍可手动继续
+          // 录制时输入了几位就是验证码的真实位数（可能小于输入框的 maxlength）；
+          // 没输入时退回“输入框填满”。输完自动继续，侧边栏的「继续」仍可手动继续
+          const typed = action.value.length;
           this.addStep({
             id,
             type: 'handoff',
             message: '请在页面上输入验证码；输完会自动继续，也可以点「继续」',
             resumeWhen: 'condition',
-            until: { kind: 'element', target: action.locator, filled: true },
+            until: {
+              kind: 'element',
+              target: action.locator,
+              ...(typed > 0 ? { minLength: typed } : { filled: true }),
+            },
           });
           break;
         }
