@@ -445,8 +445,12 @@ async function fillRecording(box, id, reload) {
   const ta = (name) => h('textarea', { name, rows: '3', spellcheck: 'false' });
   const idIn = inp('id', ''),
     nameIn = inp('name', '');
+  nameIn.required = true;
+  nameIn.placeholder = '例如：韩国签证预约';
+  idIn.placeholder = '留空自动生成';
   const urls = ta('urls'),
     exclude = ta('exclude');
+  urls.placeholder = '留空则从录制里的页面地址推断';
   const trigger = h(
     'select',
     { name: 'trigger' },
@@ -469,20 +473,23 @@ async function fillRecording(box, id, reload) {
   const submit = async (e) => {
     e.preventDefault();
     out.replaceChildren();
+    // 只有名称必填；其余留空时由后台自动生成或推断
     const body = {
-      id: idIn.value.trim(),
       name: nameIn.value.trim(),
-      urls: lines(urls),
       trigger: trigger.value,
       inputMode: mode.value,
     };
+    if (idIn.value.trim()) body.id = idIn.value.trim();
+    const matchUrls = lines(urls);
+    if (matchUrls.length) body.urls = matchUrls;
     const ex = lines(exclude);
     if (ex.length) body.exclude = ex;
     if (sharedCb) body.shared = sharedCb.querySelector('input').checked;
     showError('');
     try {
-      await api('POST', `/api/recordings/${encodeURIComponent(id)}/rule`, body);
-      state.sel.rules = body.id;
+      const res = await api('POST', `/api/recordings/${encodeURIComponent(id)}/rule`, body);
+      const created = res && (res.rule || res);
+      state.sel.rules = created && created.id ? created.id : body.id;
       state.draft = null;
       await show('rules');
     } catch (err) {
@@ -502,13 +509,18 @@ async function fillRecording(box, id, reload) {
     'form',
     { class: 'form-grid', onsubmit: submit },
     h('h2', { text: '生成规则' }),
-    field('规则 ID', idIn),
     field('名称', nameIn),
-    field('匹配网址（每行一条）', urls),
-    field('排除网址（每行一条，可空）', exclude),
-    field('触发方式', trigger),
-    field('输入方式', mode),
-    sharedCb,
+    h(
+      'details',
+      { class: 'adv' },
+      h('summary', { text: '更多设置（一般不用填）' }),
+      field('规则 ID', idIn),
+      field('匹配网址（每行一条）', urls),
+      field('排除网址（每行一条，可空）', exclude),
+      field('触发方式', trigger),
+      field('输入方式', mode),
+      sharedCb,
+    ),
     h(
       'div',
       { class: 'toolbar' },

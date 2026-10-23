@@ -7,8 +7,11 @@
 from __future__ import annotations
 
 import json
+import re
+import secrets
 import sqlite3
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
@@ -26,6 +29,62 @@ def clamp_limit(limit: int | None) -> int:
     if limit is None:
         return DEFAULT_LIMIT
     return max(1, min(limit, MAX_LIMIT))
+
+
+MAX_INFERRED_URLS = 5
+
+
+def _walk_steps(steps: list[Any]):
+    """依次产出步骤（含 if / repeat 里嵌套的）。"""
+    for s in steps:
+        if not isinstance(s, dict):
+            continue
+        yield s
+        for key in ("then", "else", "steps"):
+            nested = s.get(key)
+            if isinstance(nested, list):
+                yield from _walk_steps(nested)
+
+
+def infer_match_urls(steps: list[Any]) -> list[str]:
+    """从录制的步骤里推断规则匹配的网站：用到的每个主机一条 `scheme://host/*`。"""
+    found: list[str] = []
+    for s in _walk_steps(steps):
+        candidate = None
+        if s.get("type") == "open" and isinstance(s.get("url"), str):
+            candidate = s["url"]
+        elif s.get("type") in ("waitFor", "switchTab") and isinstance(s.get("urlPattern"), str):
+            candidate = s["urlPattern"]
+        if not candidate or "{{" in candidate:
+            continue
+        m = re.match(r"^(https?)://([^/*?#:]+)", candidate)
+        if not m:
+            try:
+                parts = urlsplit(candidate)
+            except ValueError:
+                continue
+            if parts.scheme not in ("http", "https") or not parts.hostname:
+                continue
+            m = None
+            scheme, host = parts.scheme, parts.hostname
+        else:
+            scheme, host = m.group(1), m.group(2)
+        pattern = f"{scheme}://{host}/*"
+        if pattern not in found:
+            found.append(pattern)
+        if len(found) >= MAX_INFERRED_URLS:
+            break
+    return found
+
+
+def make_rule_id(db: Database, name: str) -> str:
+    """由名称生成规则 id：英文数字取成短标识，中文等无法取标识时用 rule；后缀保证不重复。"""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:24].strip("-")
+    base = slug if len(slug) >= 2 else "rule"
+    while True:
+        rule_id = f"{base}-{secrets.token_hex(3)}"
+        if existing_version(db, rule_id) is None:
+            return rule_id
 
 
 def _rule_error(e: RuleError) -> JSONResponse:
@@ -206,18 +265,26 @@ def make_router() -> APIRouter:
         db: Database = request.app.state.db
         recording = _get(db, RECORDINGS, p, recording_id)
         steps = recording.get("steps") if isinstance(recording.get("steps"), list) else []
+        name = body.get("name")
         rule_id = body.get("id")
+        # 只需要名称：id 与匹配网站留空时自动生成 / 从录制推断
+        if not rule_id and isinstance(name, str) and name.strip():
+            rule_id = make_rule_id(db, name.strip())
+        urls = body.get("urls")
+        if not urls:
+            urls = infer_match_urls([x for x in steps if isinstance(x, dict)])
+            if not urls:
+                return _invalid(["match.urls: 录制里没有页面地址，请手动填写匹配网址"])
         rule: dict[str, Any] = {
             "id": rule_id,
-            "name": body.get("name"),
+            "name": name.strip() if isinstance(name, str) else name,
             "version": 1,
-            "match": {"urls": body.get("urls")},
+            "match": {"urls": urls},
             "requires": required_placeholders([s for s in steps if isinstance(s, dict)]),
             "steps": steps,
         }
-        for key in ("trigger", "inputMode"):
-            if key in body:
-                rule[key] = body[key]
+        rule["trigger"] = body.get("trigger", "manual")
+        rule["inputMode"] = body.get("inputMode", "auto")
         if "exclude" in body:
             rule["match"]["exclude"] = body["exclude"]
         if isinstance(rule_id, str) and rule_id:
