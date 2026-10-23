@@ -24,7 +24,6 @@ export function App() {
   const { state, error: stateError } = useBgState();
   const [tab, setTab] = useState<ActiveTab | null>(null);
   const [captured, setCaptured] = useState<number | null>(null);
-  const login = useAction();
   const capture = useAction();
   const panel = useAction();
 
@@ -91,16 +90,14 @@ export function App() {
               {state.auth.status === 'signedIn' ? (
                 <Badge tone="green">已登录</Badge>
               ) : (
-                <Button
-                  variant="primary"
-                  disabled={login.busy}
-                  onClick={() => void login.run(() => rpc('auth.login'))}
-                >
-                  {login.busy ? '登录中…' : '登录'}
-                </Button>
+                <>
+                  <Badge tone="gray">未登录</Badge>
+                  <Button variant="primary" onClick={() => void browser.runtime.openOptionsPage()}>
+                    去设置页登录
+                  </Button>
+                </>
               )}
             </div>
-            <ErrorText>{login.error}</ErrorText>
             <div className="flex items-center justify-between gap-2 text-sm">
               <span>连接</span>
               <Badge

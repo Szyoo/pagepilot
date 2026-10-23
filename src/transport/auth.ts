@@ -1,151 +1,150 @@
 import { browser } from 'wxt/browser';
+import { originPatternOf } from '../shared/glob';
 import { loadSettings } from '../shared/settings';
 import { getItem, removeItem, setItem } from '../shared/storage';
 
-/** 门户 OAuth 2.0 授权码 + PKCE。访问令牌只放 session，刷新令牌放 local。 */
+/**
+ * 登录沿用门户的网页会话：扩展向门户登录接口提交账号密码，浏览器保存门户下发的会话 cookie，
+ * 之后对后台的所有请求自动带上这个 cookie，后台（门卫）据此识别用户。
+ * 扩展不保存令牌，也不保存密码；会话过期后重新登录即可。
+ */
 
-interface AccessToken {
-  token: string;
-  expiresAt: number;
-  userId: string;
-}
-
-const ACCESS = 'auth:access';
-const REFRESH = 'auth:refresh';
 const USER = 'auth:user';
 
 export class AuthError extends Error {}
+/** 会话无效或已过期（401 或被重定向到登录页） */
+export class Unauthorized extends Error {}
+/** 已登录但无权使用扩展 */
+export class Forbidden extends Error {}
 
-const b64url = (bytes: Uint8Array): string =>
-  btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
+function trimUrl(url: string): string {
+  return url.replace(/\/+$/, '');
+}
 
-async function authBase(): Promise<{ base: string; clientId: string }> {
+async function endpoints(): Promise<{ portal: string; backend: string | undefined }> {
   const s = await loadSettings();
-  const base = s.authUrl ?? s.backendUrl;
-  if (!base) throw new AuthError('请先在设置页填写后台地址');
-  return { base: base.replace(/\/+$/, ''), clientId: s.clientId };
+  const backend = s.backendUrl ? trimUrl(s.backendUrl) : undefined;
+  const portal = s.portalUrl ? trimUrl(s.portalUrl) : backend;
+  if (!portal) throw new AuthError('请先在设置页填写门户地址');
+  return { portal, backend };
 }
 
-interface TokenResponse {
-  access_token: string;
-  refresh_token?: string;
-  expires_in: number;
-  user_id?: string;
+/** 需要的网站访问权限：门户与后台所在的站点 */
+export async function requiredOrigins(): Promise<string[]> {
+  const s = await loadSettings();
+  const urls = [s.portalUrl, s.backendUrl].filter((u): u is string => Boolean(u));
+  return [
+    ...new Set(
+      urls
+        .map((u) => originPatternOf(`${u.replace(/\/+$/, '')}/`))
+        .filter((o): o is string => o !== null),
+    ),
+  ];
 }
 
-function userIdOf(res: TokenResponse): string {
-  if (res.user_id) return res.user_id;
-  try {
-    const payload = res.access_token.split('.')[1] ?? '';
-    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as {
-      sub?: string;
-    };
-    if (json.sub) return json.sub;
-  } catch {
-    // 不是 JWT
-  }
-  throw new AuthError('授权服务未返回用户标识');
+export async function hasOriginPermissions(): Promise<boolean> {
+  const origins = await requiredOrigins();
+  if (origins.length === 0) return false;
+  return browser.permissions.contains({ origins });
 }
 
-async function store(res: TokenResponse): Promise<AccessToken> {
-  const access: AccessToken = {
-    token: res.access_token,
-    expiresAt: Date.now() + res.expires_in * 1000,
-    userId: userIdOf(res),
-  };
-  await setItem('session', ACCESS, access);
-  await setItem('local', USER, access.userId);
-  if (res.refresh_token) await setItem('local', REFRESH, res.refresh_token);
-  return access;
-}
-
-async function tokenRequest(params: Record<string, string>): Promise<TokenResponse> {
-  const { base, clientId } = await authBase();
-  const res = await fetch(`${base}/oauth/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: clientId, ...params }),
-  });
-  // 4xx 是授权服务明确拒绝；5xx 是服务端暂时故障，不应让用户被登出
-  if (res.status >= 400 && res.status < 500) throw new AuthError(`授权服务返回 ${res.status}`);
-  if (!res.ok) throw new Error(`授权服务暂时不可用（${res.status}）`);
-  return (await res.json()) as TokenResponse;
-}
-
-export async function login(): Promise<string> {
-  const { base, clientId } = await authBase();
-  const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
-  const challenge = b64url(
-    new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))),
-  );
-  const state = b64url(crypto.getRandomValues(new Uint8Array(16)));
-  const redirectUri = browser.identity.getRedirectURL();
-
-  const url = new URL(`${base}/oauth/authorize`);
-  url.search = new URLSearchParams({
-    response_type: 'code',
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    code_challenge: challenge,
-    code_challenge_method: 'S256',
-    state,
-  }).toString();
-
-  const redirected = await browser.identity.launchWebAuthFlow({
-    url: url.toString(),
-    interactive: true,
-  });
-  if (!redirected) throw new AuthError('登录已取消');
-  const back = new URL(redirected);
-  if (back.searchParams.get('state') !== state) throw new AuthError('登录状态校验失败');
-  const code = back.searchParams.get('code');
-  if (!code) throw new AuthError(back.searchParams.get('error') ?? '登录失败');
-
-  const res = await tokenRequest({
-    grant_type: 'authorization_code',
-    code,
-    redirect_uri: redirectUri,
-    code_verifier: verifier,
-  });
-  return (await store(res)).userId;
-}
-
-export async function logout(): Promise<void> {
-  await removeItem('session', ACCESS);
-  await removeItem('local', REFRESH);
-  await removeItem('local', USER);
+/** 带会话 cookie 的请求；401 或被重定向（多半是登录页）视为会话失效 */
+export async function fetchWithSession(url: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(url, { ...init, credentials: 'include', redirect: 'manual' });
+  if (res.type === 'opaqueredirect' || res.status === 401) throw new Unauthorized();
+  if (res.status === 403) throw new Forbidden();
+  return res;
 }
 
 export async function currentUserId(): Promise<string | undefined> {
   return (await getItem<string | null>('local', USER, null)) ?? undefined;
 }
 
-let refreshing: Promise<AccessToken | null> | null = null;
-
-async function refresh(): Promise<AccessToken | null> {
-  const refreshToken = await getItem<string | null>('local', REFRESH, null);
-  if (!refreshToken) return null;
-  try {
-    const res = await tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken });
-    return await store(res);
-  } catch (e) {
-    if (e instanceof AuthError) {
-      await logout();
-      return null;
-    }
-    throw e; // 网络错误：保留登录状态，稍后重试
-  }
+interface LoginResponse {
+  ok?: boolean;
+  id?: string | number;
+  error?: string;
 }
 
-/** 有效的访问令牌；临近过期时自动续期，失败返回 null（需要重新登录） */
-export async function getAccessToken(force = false): Promise<AccessToken | null> {
-  const cached = await getItem<AccessToken | null>('session', ACCESS, null);
-  if (cached && !force && cached.expiresAt - Date.now() > 30_000) return cached;
-  refreshing ??= refresh().finally(() => {
-    refreshing = null;
-  });
-  return refreshing;
+/** 用门户账号登录，返回用户标识 */
+export async function login(username: string, password: string): Promise<string> {
+  const { portal, backend } = await endpoints();
+  if (!(await hasOriginPermissions())) throw new AuthError('请先授予门户与后台网站的访问权限');
+
+  let res: Response;
+  try {
+    res = await fetch(`${portal}/api/login`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+  } catch {
+    throw new AuthError('无法连接门户，请检查地址与网络');
+  }
+  const body = (await res.json().catch(() => ({}))) as LoginResponse;
+  if (res.status === 429) throw new AuthError('尝试过于频繁，请稍后再试');
+  if (body.error === 'account_expired') throw new AuthError('账号已过期');
+  if (res.status === 401 || body.error === 'invalid_credentials') {
+    throw new AuthError('账号或密码错误');
+  }
+  if (!res.ok || body.ok === false) throw new AuthError(`登录失败（${res.status}）`);
+
+  // 以后台识别出的用户为准；后台尚未配置时用门户返回的标识
+  let userId = body.id !== undefined ? String(body.id) : '';
+  if (backend) {
+    try {
+      const me = await fetchMe(backend);
+      if (me) userId = me;
+    } catch (e) {
+      // 后台不认门户会话，或账号无权使用：登录视为失败，避免之后第一次校验就把用户清掉
+      if (e instanceof Unauthorized) {
+        throw new AuthError('后台没有接受门户会话，请检查后台是否已接入门户登录');
+      }
+      if (e instanceof Forbidden) throw new AuthError('当前账号无权使用扩展');
+      // 后台暂时不可用（网络错误、5xx）：先用门户返回的标识，后台恢复后以 sub 为准
+    }
+  }
+  if (!userId) throw new AuthError('门户未返回用户标识');
+  await setItem('local', USER, userId);
+  return userId;
+}
+
+async function fetchMe(backend: string): Promise<string | null> {
+  const res = await fetchWithSession(`${backend}/api/me`);
+  if (!res.ok) throw new Error(`后台返回 ${res.status}`);
+  const me = (await res.json().catch(() => ({}))) as { sub?: string };
+  return me.sub ?? null;
+}
+
+export async function logout(): Promise<void> {
+  try {
+    const { portal } = await endpoints();
+    await fetch(`${portal}/api/logout`, { method: 'POST', credentials: 'include' });
+  } catch {
+    // 即使门户不可达，本地也要登出
+  }
+  await removeItem('local', USER);
+}
+
+/**
+ * 校验当前会话，返回用户标识；会话已失效返回 null（并清除本地登录状态）。
+ * 网络错误与服务端故障会抛出，调用方应保留登录状态并稍后重试。
+ */
+export async function checkSession(): Promise<string | null> {
+  const stored = await currentUserId();
+  if (!stored) return null;
+  const { backend } = await endpoints();
+  if (!backend) throw new AuthError('请先在设置页填写后台地址');
+  try {
+    const sub = await fetchMe(backend);
+    if (sub && sub !== stored) await setItem('local', USER, sub);
+    return sub ?? stored;
+  } catch (e) {
+    if (e instanceof Unauthorized) {
+      await removeItem('local', USER);
+      return null;
+    }
+    throw e;
+  }
 }

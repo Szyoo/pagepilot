@@ -4,9 +4,8 @@ import { z } from 'zod';
 export const settingsSchema = z.object({
   /** 后台地址，API 路径见 docs/protocol.md */
   backendUrl: z.url().optional(),
-  /** 门户授权服务地址，为空时与后台地址相同 */
-  authUrl: z.url().optional(),
-  clientId: z.string().default('pagepilot'),
+  /** 门户地址（登录接口所在），为空时与后台地址相同 */
+  portalUrl: z.url().optional(),
   /** 实时通道优先级 */
   transport: z.enum(['websocket', 'sse', 'poll']).default('websocket'),
   pollIntervalSec: z.number().int().min(30).default(60),
@@ -27,8 +26,10 @@ const KEY = 'settings';
 export async function loadSettings(): Promise<Settings> {
   const stored = (await browser.storage.local.get(KEY))[KEY] as object | undefined;
   const envBackend = import.meta.env.VITE_DEFAULT_BACKEND_URL as string | undefined;
+  const envPortal = import.meta.env.VITE_DEFAULT_PORTAL_URL as string | undefined;
   const parsed = settingsSchema.safeParse({
     ...(envBackend ? { backendUrl: envBackend } : {}),
+    ...(envPortal ? { portalUrl: envPortal } : {}),
     ...(stored ?? {}),
   });
   return parsed.success ? parsed.data : settingsSchema.parse({});

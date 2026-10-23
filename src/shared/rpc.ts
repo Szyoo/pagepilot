@@ -61,7 +61,10 @@ export interface BgState {
 
 export interface RpcMethods {
   'state.get': { params: undefined; result: BgState };
-  'auth.login': { params: undefined; result: undefined };
+  /** 用门户账号登录；调用前界面需先申请 `auth.origins` 返回的网站访问权限（用户手势） */
+  'auth.login': { params: { username: string; password: string }; result: undefined };
+  /** 登录与同步所需的网站访问权限（门户与后台所在站点，match pattern） */
+  'auth.origins': { params: undefined; result: string[] };
   'auth.logout': { params: undefined; result: undefined };
 
   'vault.get': { params: undefined; result: LocalData };

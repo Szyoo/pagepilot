@@ -10,7 +10,7 @@ import {
 } from '../schema/message';
 import { loadSettings, type Settings } from '../shared/settings';
 import { getItem, setItem, sleep, uuid } from '../shared/storage';
-import { getAccessToken } from './auth';
+import { checkSession, Forbidden, fetchWithSession, Unauthorized } from './auth';
 import { enqueue, flush } from './queue';
 
 export type Channel = 'websocket' | 'sse' | 'poll';
@@ -37,9 +37,6 @@ interface Session {
   /** 会话结束时 resolve；stop 为 true 表示不应再重连 */
   closed: Promise<{ stop?: boolean; reauth?: boolean }>;
 }
-
-class Forbidden extends Error {}
-class Unauthorized extends Error {}
 
 const HEARTBEAT_MS = 20_000;
 const DEAD_AFTER_MS = 50_000;
@@ -109,17 +106,24 @@ export class Transport {
   private async run(): Promise<void> {
     let failures = 0;
     while (this.running) {
-      // 续期遇到网络错误或服务端故障时保留登录态，退避后重试；返回 null 才是需要重新登录
-      let token: Awaited<ReturnType<typeof getAccessToken>>;
+      // 会话由门户 cookie 维持；网络错误与服务端故障时保留登录状态并退避重试，会话失效才停止
+      let uid: string | null;
       try {
-        token = await getAccessToken();
+        uid = await checkSession();
       } catch (e) {
+        if (e instanceof Forbidden) {
+          this.deps.onStatus({ status: 'error', error: '当前账号无权使用扩展' });
+          return;
+        }
         failures++;
-        this.deps.onStatus({ status: 'error', error: e instanceof Error ? e.message : '续期失败' });
+        this.deps.onStatus({
+          status: 'error',
+          error: e instanceof Error ? e.message : '会话校验失败',
+        });
         await this.sleepOrWake(Math.min(60_000, 1000 * 2 ** Math.min(failures, 6)));
         continue;
       }
-      if (!token) {
+      if (!uid) {
         this.deps.onStatus({ status: 'idle' });
         return;
       }
@@ -135,7 +139,7 @@ export class Transport {
       let lastError = '连接失败';
       for (const channel of channelOrder(settings.transport)) {
         try {
-          const session = await this.open(channel, settings, token.token);
+          const session = await this.open(channel, settings);
           this.session = session;
           established = true;
           failures = 0;
@@ -164,16 +168,9 @@ export class Transport {
         return;
       }
       if (result.reauth) {
-        const fresh = await getAccessToken(true).catch(() => undefined);
-        if (fresh === undefined) {
-          failures++;
-          await this.sleepOrWake(Math.min(60_000, 1000 * 2 ** Math.min(failures, 6)));
-          continue;
-        }
-        if (!fresh) {
-          this.deps.onStatus({ status: 'idle' });
-          return;
-        }
+        // 会话可能已失效：回到循环开头重新校验，失效则停止；仍有效则退避，避免空转
+        failures++;
+        await this.sleepOrWake(Math.min(60_000, 1000 * 2 ** Math.min(failures, 6)));
         continue;
       }
       if (!established) {
@@ -211,11 +208,11 @@ export class Transport {
     await flush((m) => session.send(m));
   }
 
-  private open(channel: Channel, settings: Settings, token: string): Promise<Session> {
+  private open(channel: Channel, settings: Settings): Promise<Session> {
     const base = (settings.backendUrl ?? '').replace(/\/+$/, '');
-    if (channel === 'websocket') return this.openWs(base, token);
-    if (channel === 'sse') return this.openSse(base, token);
-    return this.openPoll(base, token, settings.pollIntervalSec);
+    if (channel === 'websocket') return this.openWs(base);
+    if (channel === 'sse') return this.openSse(base);
+    return this.openPoll(base, settings.pollIntervalSec);
   }
 
   /** 处理一条原始下行消息 */
@@ -255,28 +252,18 @@ export class Transport {
     }
   }
 
-  private async post(base: string, token: string, msg: Uplink): Promise<void> {
-    const res = await fetch(`${base}/api/ext/uplink`, {
+  private async post(base: string, msg: Uplink): Promise<void> {
+    const res = await fetchWithSession(`${base}/api/ext/uplink`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(msg),
     });
-    if (res.status === 401) throw new Unauthorized();
-    if (res.status === 403) throw new Forbidden();
     if (!res.ok) throw new Error(`上行失败 ${res.status}`);
   }
 
-  private async openWs(base: string, token: string): Promise<Session> {
-    const ticketRes = await fetch(`${base}/api/ext/ws-ticket`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (ticketRes.status === 401) throw new Unauthorized();
-    if (ticketRes.status === 403) throw new Forbidden();
-    if (!ticketRes.ok) throw new Error(`获取连接票据失败 ${ticketRes.status}`);
-    const { ticket } = (await ticketRes.json()) as { ticket: string };
-
-    const wsUrl = `${base.replace(/^http/, 'ws')}/api/ext/ws?ticket=${encodeURIComponent(ticket)}`;
+  private async openWs(base: string): Promise<Session> {
+    // 握手时浏览器会带上门户会话 cookie，由门卫校验身份，不再需要票据
+    const wsUrl = `${base.replace(/^http/, 'ws')}/api/ext/ws`;
     const ws = new WebSocket(wsUrl);
     await new Promise<void>((resolve, reject) => {
       ws.onopen = () => resolve();
@@ -311,18 +298,16 @@ export class Transport {
     return { send, close: () => ws.close(), closed };
   }
 
-  private async openSse(base: string, token: string): Promise<Session> {
+  private async openSse(base: string): Promise<Session> {
     const since = await this.deps.lastSeq();
     const controller = new AbortController();
-    const res = await fetch(`${base}/api/ext/stream?since=${since}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
+    const res = await fetchWithSession(`${base}/api/ext/stream?since=${since}`, {
+      headers: { Accept: 'text/event-stream' },
       signal: controller.signal,
     });
-    if (res.status === 401) throw new Unauthorized();
-    if (res.status === 403) throw new Forbidden();
     if (!res.ok || !res.body) throw new Error(`SSE 连接失败 ${res.status}`);
 
-    const send = (msg: Uplink) => this.post(base, token, msg);
+    const send = (msg: Uplink) => this.post(base, msg);
     const closed = (async () => {
       const reader = res.body?.getReader();
       if (!reader) return {};
@@ -354,15 +339,11 @@ export class Transport {
     return { send, close: () => controller.abort(), closed };
   }
 
-  private async openPoll(base: string, token: string, intervalSec: number): Promise<Session> {
-    const send = (msg: Uplink) => this.post(base, token, msg);
+  private async openPoll(base: string, intervalSec: number): Promise<Session> {
+    const send = (msg: Uplink) => this.post(base, msg);
     const pollOnce = async (): Promise<void> => {
       const since = await this.deps.lastSeq();
-      const res = await fetch(`${base}/api/ext/poll?since=${since}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.status === 401) throw new Unauthorized();
-      if (res.status === 403) throw new Forbidden();
+      const res = await fetchWithSession(`${base}/api/ext/poll?since=${since}`);
       if (!res.ok) throw new Error(`轮询失败 ${res.status}`);
       const body = (await res.json()) as { messages?: unknown[] };
       for (const m of body.messages ?? []) await this.handle(JSON.stringify(m), send);

@@ -28,7 +28,7 @@ import {
 import { loadSettings, SETTINGS_KEY } from '../shared/settings';
 import { uuid } from '../shared/storage';
 import { POLL_ALARM, Transport, type TransportStatus } from '../transport';
-import { currentUserId, login, logout } from '../transport/auth';
+import { currentUserId, login, logout, requiredOrigins } from '../transport/auth';
 import { notify } from './notify';
 import { hostPermitted, syncContentScripts } from './permissions';
 import { RecordingSession } from './recording';
@@ -147,12 +147,13 @@ export function startApp(): void {
 
   const handlers: Handlers = {
     'state.get': getState,
-    async 'auth.login'() {
-      await login();
+    async 'auth.login'({ username, password }) {
+      await login(username, password);
       transport.restart();
       changed();
       return undefined;
     },
+    'auth.origins': requiredOrigins,
     async 'auth.logout'() {
       const uid = await currentUserId();
       transport.stop();

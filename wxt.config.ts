@@ -24,7 +24,6 @@ export default defineConfig({
       'alarms',
       'webNavigation',
       'notifications',
-      'identity',
       'offscreen',
       // @types/chrome 的权限列表尚未收录 debugger
       ...(e2eTrusted ? (['debugger'] as unknown as 'tabs'[]) : []),
