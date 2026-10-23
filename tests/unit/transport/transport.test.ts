@@ -85,7 +85,10 @@ beforeEach(() => {
   );
   checkSession.mockReset();
   checkSession.mockResolvedValue('u1');
-  fakeBrowser.storage.local.data.set('settings', { backendUrl: 'https://api.example.com/' });
+  fakeBrowser.storage.local.data.set('settings', {
+    backendUrl: 'https://api.example.com/',
+    transport: 'websocket',
+  });
 });
 
 afterEach(() => {

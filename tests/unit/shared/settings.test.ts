@@ -14,7 +14,7 @@ describe('settings', () => {
   it('没有存储时返回默认值', async () => {
     const s = await loadSettings();
     expect(s).toMatchObject({
-      transport: 'websocket',
+      transport: 'sse',
       pollIntervalSec: 60,
       sound: false,
       minRepeatIntervalMs: 3000,

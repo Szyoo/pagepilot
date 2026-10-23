@@ -7,7 +7,8 @@ export const settingsSchema = z.object({
   /** 门户地址（登录接口所在），为空时与后台地址相同 */
   portalUrl: z.url().optional(),
   /** 实时通道优先级 */
-  transport: z.enum(['websocket', 'sse', 'poll']).default('websocket'),
+  // 默认 SSE：门户会话 cookie 通常是 SameSite=Lax，浏览器不会在 WebSocket 握手里带上它
+  transport: z.enum(['websocket', 'sse', 'poll']).default('sse'),
   pollIntervalSec: z.number().int().min(30).default(60),
   /** 提示音总开关，默认关闭；规则无法绕过 */
   sound: z.boolean().default(false),
