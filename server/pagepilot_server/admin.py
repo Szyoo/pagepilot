@@ -33,6 +33,11 @@ def clamp_limit(limit: int | None) -> int:
 
 MAX_INFERRED_URLS = 5
 
+# 验证码、短信验证码这类每次都不同的输入，不可能存进本地保险库
+_USER_INPUT_KEY = re.compile(r"captcha|verif|otp|sms|one[-_]?time|验证码", re.IGNORECASE)
+_SECRET_PLACEHOLDER = re.compile(r"^\{\{\s*secret\.([A-Za-z0-9_.-]+)\s*\}\}$")
+CAPTCHA_HANDOFF_MESSAGE = "请在页面上输入验证码，完成后点「继续」"
+
 
 def _walk_steps(steps: list[Any]):
     """依次产出步骤（含 if / repeat 里嵌套的）。"""
@@ -44,6 +49,38 @@ def _walk_steps(steps: list[Any]):
             nested = s.get(key)
             if isinstance(nested, list):
                 yield from _walk_steps(nested)
+
+
+def captchas_to_handoff(steps: list[Any]) -> list[Any]:
+    """把录制里“用凭据填写验证码输入框”的步骤改成交还给用户的步骤。
+
+    扩展录制时会把验证码等敏感输入替换成 `{{secret.<字段名>}}`，但验证码每次都不同，
+    保险库里存不了，规则也就跑不起来；改成交还步骤，由用户输入后继续。
+    """
+    out: list[Any] = []
+    for s in steps:
+        if not isinstance(s, dict):
+            out.append(s)
+            continue
+        value = s.get("value")
+        m = _SECRET_PLACEHOLDER.match(value) if s.get("type") == "fill" and isinstance(value, str) else None
+        if m and _USER_INPUT_KEY.search(m.group(1)):
+            handoff = {
+                "id": s.get("id"),
+                "type": "handoff",
+                "message": CAPTCHA_HANDOFF_MESSAGE,
+                "resumeWhen": "userConfirm",
+            }
+            if isinstance(s.get("note"), str):
+                handoff["note"] = s["note"]
+            out.append(handoff)
+            continue
+        converted = dict(s)
+        for key in ("then", "else", "steps"):
+            if isinstance(s.get(key), list):
+                converted[key] = captchas_to_handoff(s[key])
+        out.append(converted)
+    return out
 
 
 def infer_match_urls(steps: list[Any]) -> list[str]:
@@ -265,6 +302,7 @@ def make_router() -> APIRouter:
         db: Database = request.app.state.db
         recording = _get(db, RECORDINGS, p, recording_id)
         steps = recording.get("steps") if isinstance(recording.get("steps"), list) else []
+        steps = captchas_to_handoff(steps)
         name = body.get("name")
         rule_id = body.get("id")
         # 只需要名称：id 与匹配网站留空时自动生成 / 从录制推断
