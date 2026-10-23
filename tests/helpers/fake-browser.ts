@@ -1,5 +1,6 @@
 /**
- * `wxt/browser` 的内存实现，只覆盖 storage.local / storage.session / alarms / runtime.getManifest。
+ * `wxt/browser` 的内存实现，只覆盖 storage.local / storage.session / alarms / runtime.getManifest
+ * 与 permissions.contains（已授予的网站权限放在 `fakeBrowser.permissions.granted`）。
  *
  * 用法（vi.mock 会被提升，所以在测试文件里写）：
  *   vi.mock('wxt/browser', async () => (await import('../helpers/fake-browser')).browserModule);
@@ -44,12 +45,20 @@ export const fakeBrowser = {
   runtime: {
     getManifest: () => ({ version: '0.0.0-test' }),
   },
+  permissions: {
+    /** 已授予的网站访问权限（match pattern） */
+    granted: new Set<string>(),
+    async contains(p: { origins?: string[]; permissions?: string[] }): Promise<boolean> {
+      return (p.origins ?? []).every((o) => fakeBrowser.permissions.granted.has(o));
+    },
+  },
 };
 
 export function resetFakeBrowser(): void {
   fakeBrowser.storage.local.data.clear();
   fakeBrowser.storage.session.data.clear();
   fakeBrowser.alarms.created.length = 0;
+  fakeBrowser.permissions.granted.clear();
 }
 
 export const browserModule = { browser: fakeBrowser };

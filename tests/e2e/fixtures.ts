@@ -14,7 +14,7 @@ import {
   type Worker,
 } from '@playwright/test';
 import type { BgState, RpcMethod, RpcMethods, RunView } from '../../src/shared/rpc';
-import { FakeBackend } from './fake-backend';
+import { FakeBackend, type FakeBackendOptions } from './fake-backend';
 
 /** e2e 构建产物，见 global-setup.ts */
 export const EXTENSION_DIR = path.resolve('.output/e2e/chrome-mv3');
@@ -47,8 +47,10 @@ export interface ExtensionHelper {
     message: string,
     timeoutMs?: number,
   ): Promise<RunView>;
+  /** 写入设置（backendUrl 指向假后台，可用参数覆盖），不登录 */
+  configure(settings?: Record<string, unknown>): Promise<void>;
   /**
-   * 写入登录态与设置，等待实时通道连上假后台。
+   * 写入设置后用假后台的测试账号走 RPC `auth.login` 登录，等待实时通道连上假后台。
    * 默认还等待 hello；轮询通道不发 hello，需传 waitHello: false
    */
   signIn(settings?: Record<string, unknown>, opts?: { waitHello?: boolean }): Promise<void>;
@@ -68,6 +70,8 @@ export interface ExtensionHelper {
 interface Options {
   /** 加载的扩展目录 */
   extensionDir: string;
+  /** 假后台的选项，用 test.use({ backendOptions: {...} }) 覆盖 */
+  backendOptions: FakeBackendOptions;
 }
 
 interface Fixtures {
@@ -79,9 +83,10 @@ interface Fixtures {
 export const test = base.extend<Fixtures & Options>({
   extensionDir: [EXTENSION_DIR, { option: true }],
 
-  // biome-ignore lint/correctness/noEmptyPattern: Playwright 要求以解构声明依赖
-  backend: async ({}, use) => {
-    const backend = await FakeBackend.start();
+  backendOptions: [{}, { option: true }],
+
+  backend: async ({ backendOptions }, use) => {
+    const backend = await FakeBackend.start(backendOptions);
     await use(backend);
     await backend.close();
   },
@@ -153,18 +158,10 @@ export const test = base.extend<Fixtures & Options>({
       waitForState,
       waitForRun,
 
-      async signIn(settings = {}, opts = {}) {
-        // chrome.identity.launchWebAuthFlow 无法在自动化中驱动：直接写入登录后的存储状态
+      async configure(settings = {}) {
+        // 门户地址省略时与后台地址相同（假后台同时充当门户）
         await page.evaluate(
-          async ({ token, backendUrl, settings }) => {
-            await chrome.storage.session.set({
-              'auth:access': { token, expiresAt: Date.now() + 3600_000, userId: 'e2e-user' },
-            });
-            await chrome.storage.local.set({
-              'auth:refresh': 'e2e-refresh-unused',
-              'auth:user': 'e2e-user',
-            });
-            // 设置最后写入：设置变化会让后台重新连接
+          async ({ backendUrl, settings }) => {
             await chrome.storage.local.set({
               settings: {
                 backendUrl,
@@ -174,8 +171,17 @@ export const test = base.extend<Fixtures & Options>({
               },
             });
           },
-          { token: backend.token, backendUrl: backend.url, settings },
+          { backendUrl: backend.url, settings },
         );
+      },
+
+      async signIn(settings = {}, opts = {}) {
+        // 网站访问权限由 e2e 构建的 host_permissions 提供（见 wxt.config.ts），无需弹窗授权
+        await helper.configure(settings);
+        await rpc('auth.login', {
+          username: backend.account.username,
+          password: backend.account.password,
+        });
         await waitForState(
           (s) => s.auth.status === 'signedIn' && s.connection.status === 'connected',
           '实时通道连上假后台',

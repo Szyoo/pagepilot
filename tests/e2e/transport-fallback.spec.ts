@@ -10,12 +10,12 @@ test('WebSocket 不可用时回退到 SSE：hello 走 uplink 并带 lastSeq，�
   backend,
   ext,
 }) => {
-  backend.fail.wsTicket = true;
+  backend.fail.ws = true;
   await ext.signIn();
 
   const s = await ext.state();
   expect(s.connection).toMatchObject({ status: 'connected', channel: 'sse' });
-  expect(backend.requests.wsTicket, '先尝试过 WebSocket').toBeGreaterThan(0);
+  expect(backend.requests.ws, '先尝试过 WebSocket').toBeGreaterThan(0);
   expect(backend.wsConnections).toHaveLength(0);
   expect(backend.requests.stream[0]).toBe(0);
 
@@ -40,13 +40,15 @@ test('WebSocket 不可用时回退到 SSE：hello 走 uplink 并带 lastSeq，�
   await expect.poll(() => backend.acks.includes(seq2)).toBe(true);
   const after = await ext.state();
   expect(after.connection).toMatchObject({ status: 'connected', channel: 'sse' });
+  // SSE 与 uplink 都带着门户会话 cookie，没有请求因未认证被拒绝
+  expect(backend.requests.unauthorized).toEqual([]);
 });
 
 test('WebSocket 与 SSE 都不可用时回退到轮询：首次轮询即拿到规则，不发 hello', async ({
   backend,
   ext,
 }) => {
-  backend.fail.wsTicket = true;
+  backend.fail.ws = true;
   backend.fail.stream = true;
   // 连接前预置规则：建立轮询通道时会立即轮询一次
   const seq1 = backend.pushRule(captchaRule(backend.origin()));
@@ -55,7 +57,7 @@ test('WebSocket 与 SSE 都不可用时回退到轮询：首次轮询即拿到�
   const s = await ext.state();
   expect(s.connection).toMatchObject({ status: 'connected', channel: 'poll' });
   expect(s.rules.map((r) => r.id)).toEqual(['e2e-captcha']);
-  expect(backend.requests.wsTicket).toBeGreaterThan(0);
+  expect(backend.requests.ws).toBeGreaterThan(0);
   expect(backend.requests.stream.length).toBeGreaterThan(0);
   expect(backend.requests.poll[0], '首次轮询从 0 开始').toBe(0);
   await expect.poll(() => backend.acks.includes(seq1), { message: '轮询结果被确认' }).toBe(true);
@@ -78,4 +80,5 @@ test('WebSocket 与 SSE 都不可用时回退到轮询：首次轮询即拿到�
   expect(backend.requests.uplink).not.toContain('hello');
   const after = await ext.state();
   expect(after.connection).toMatchObject({ status: 'connected', channel: 'poll' });
+  expect(backend.requests.unauthorized).toEqual([]);
 });

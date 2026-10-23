@@ -7,9 +7,14 @@ import { fileURLToPath } from 'node:url';
 import { type WebSocket, WebSocketServer } from 'ws';
 
 /**
- * 本地假后台：实现 docs/protocol.md 中扩展用到的接口（不含 OAuth），
- * 同时托管 tests/e2e/pages 下的测试页面。每个测试一个实例，监听随机端口。
+ * 本地假后台：实现 docs/protocol.md 中扩展用到的接口，同时充当门户（/api/login 等），
+ * 并托管 tests/e2e/pages 下的测试页面。每个测试一个实例，监听随机端口。
+ *
+ * 身份沿用门户网页会话：登录成功后下发 `portal_session` cookie，之后的 /api/me 与
+ * /api/ext/* 只认这个 cookie（WebSocket 在握手时校验）。
  */
+
+export const SESSION_COOKIE = 'portal_session';
 
 const PAGES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'pages');
 
@@ -82,11 +87,24 @@ interface LogEntry {
 export interface FakeBackendOptions {
   /** 后台主动发送 ping 的间隔 */
   pingIntervalMs?: number;
+  /**
+   * 会话 cookie 的 SameSite，默认 None（同时带 Secure）。
+   * 实测（Chromium）：扩展 service worker 对有主机权限站点的 fetch 会带上 Lax / Strict cookie，
+   * 但 WebSocket 握手只带 SameSite=None 的 cookie。Chromium 把 127.0.0.1 / localhost 视为
+   * 安全上下文，http 下也接受 Secure cookie
+   */
+  cookieSameSite?: 'None' | 'Lax';
 }
 
 export class FakeBackend {
-  /** 合法的访问令牌（随机生成） */
-  readonly token = randomBytes(24).toString('hex');
+  /** 测试账号（随机生成，只在内存里比对，不打印） */
+  readonly account = {
+    username: `e2e-${randomBytes(4).toString('hex')}`,
+    password: randomBytes(18).toString('base64url'),
+  };
+  /** 门户登录接口返回的用户 id；后台 /api/me 返回的 sub 与之不同，用于验证扩展以 sub 为准 */
+  readonly portalUserId = 1001;
+  readonly sub = 'e2e-user';
   readonly received = new Received();
   /** 已确认的下行序号 */
   readonly acks: number[] = [];
@@ -96,34 +114,48 @@ export class FakeBackend {
   readonly bookingLoads: number[] = [];
   /** 每个 WebSocket 连接建立的时间 */
   readonly wsConnections: number[] = [];
-  /** 各接口收到的请求：ws-ticket 次数，stream 与 poll 记录 since 参数，uplink 记录消息 kind */
+  /**
+   * 各接口收到的请求：ws 为 WebSocket 握手次数，stream 与 poll 记录 since 参数，
+   * uplink 记录消息 kind；login 记录结果，logout / me 记录次数；
+   * unauthorized 记录因会话无效被拒绝的路径
+   */
   readonly requests = {
-    wsTicket: 0,
+    ws: 0,
     stream: [] as number[],
     poll: [] as number[],
     uplink: [] as string[],
+    login: [] as ('ok' | 'invalid')[],
+    logout: 0,
+    me: 0,
+    unauthorized: [] as string[],
   };
   /**
    * 故障开关，用于测试传输层回退：
-   * - wsTicket：ws-ticket 返回 500，WebSocket 无法建立
+   * - ws：WebSocket 握手返回 500
    * - stream：SSE 端点返回 500
    * - poll：轮询端点返回 500
    */
-  readonly fail = { wsTicket: false, stream: false, poll: false };
+  readonly fail = { ws: false, stream: false, poll: false };
 
   private server: Server;
   private wss = new WebSocketServer({ noServer: true });
   private sockets = new Set<WebSocket>();
   private sseClients = new Set<ServerResponse>();
   private rawSockets = new Set<Socket>();
-  private tickets = new Map<string, number>();
+  /** 有效会话：cookie 值 → sub */
+  private sessions = new Map<string, string>();
   private rules = new Map<string, RawRule>();
   private log: LogEntry[] = [];
   private seq = 0;
   private pingTimer: ReturnType<typeof setInterval>;
   private port = 0;
+  private cookieAttributes: string;
 
   private constructor(opts: FakeBackendOptions) {
+    this.cookieAttributes =
+      (opts.cookieSameSite ?? 'None') === 'None'
+        ? 'Path=/; HttpOnly; Secure; SameSite=None'
+        : 'Path=/; HttpOnly; SameSite=Lax';
     this.server = createServer((req, res) => {
       this.route(req, res).catch(() => {
         if (!res.headersSent) res.writeHead(500);
@@ -179,6 +211,22 @@ export class FakeBackend {
   pushSnapshot(rules: RawRule[]): number {
     this.rules = new Map(rules.map((r) => [String(r.id), r]));
     return this.emit({ kind: 'snapshot', rules });
+  }
+
+  /** 当前有效会话数 */
+  get sessionCount(): number {
+    return this.sessions.size;
+  }
+
+  /**
+   * 使所有会话失效（模拟门户会话过期），之后带旧 cookie 的请求都返回 401。
+   * closeCode 给出时，已建立的 WebSocket 以该关闭码断开（4401 表示需要重新认证）
+   */
+  expireSessions(opts: { closeCode?: number } = {}): void {
+    this.sessions.clear();
+    if (opts.closeCode !== undefined) {
+      for (const ws of this.sockets) ws.close(opts.closeCode, 'session expired');
+    }
   }
 
   /** 断开所有实时连接（模拟网络中断），扩展应自动重连 */
@@ -255,28 +303,76 @@ export class FakeBackend {
 
   // ---- HTTP ----
 
-  private authorized(req: IncomingMessage): boolean {
-    return req.headers.authorization === `Bearer ${this.token}`;
+  /** 请求所带会话对应的 sub；无 cookie 或会话无效时为 undefined */
+  private sessionOf(req: IncomingMessage): string | undefined {
+    const value = cookieOf(req, SESSION_COOKIE);
+    return value ? this.sessions.get(value) : undefined;
+  }
+
+  private reject(req: IncomingMessage, res: ServerResponse, p: string): void {
+    this.requests.unauthorized.push(p);
+    // 浏览器会话失效时常见的形态：401 + JSON
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'unauthorized' }));
+    req.resume();
   }
 
   private async route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://x');
     const p = url.pathname;
 
-    if (p.startsWith('/api/ext/')) {
-      if (!this.authorized(req)) {
-        res.writeHead(401).end();
+    if (p === '/api/login' && req.method === 'POST') {
+      let body: { username?: unknown; password?: unknown } = {};
+      try {
+        body = JSON.parse(await readBody(req)) as typeof body;
+      } catch {
+        // 按错误凭据处理
+      }
+      if (body.username !== this.account.username || body.password !== this.account.password) {
+        this.requests.login.push('invalid');
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid_credentials' }));
         return;
       }
-      if (p === '/api/ext/ws-ticket' && req.method === 'POST') {
-        this.requests.wsTicket++;
-        if (this.fail.wsTicket) {
-          res.writeHead(500).end();
-          return;
-        }
-        const ticket = randomBytes(16).toString('hex');
-        this.tickets.set(ticket, Date.now() + 30_000);
-        json(res, { ticket, expiresIn: 30 });
+      this.requests.login.push('ok');
+      const value = randomBytes(24).toString('hex');
+      this.sessions.set(value, this.sub);
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Set-Cookie': `${SESSION_COOKIE}=${value}; ${this.cookieAttributes}`,
+      });
+      res.end(
+        JSON.stringify({ ok: true, id: this.portalUserId, user: body.username, role: 'member' }),
+      );
+      return;
+    }
+
+    if (p === '/api/logout' && req.method === 'POST') {
+      this.requests.logout++;
+      const value = cookieOf(req, SESSION_COOKIE);
+      if (value) this.sessions.delete(value);
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Set-Cookie': `${SESSION_COOKIE}=; Max-Age=0; ${this.cookieAttributes}`,
+      });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    if (p === '/api/me' && req.method === 'GET') {
+      this.requests.me++;
+      const sub = this.sessionOf(req);
+      if (!sub) {
+        this.reject(req, res, p);
+        return;
+      }
+      json(res, { sub, role: 'member' });
+      return;
+    }
+
+    if (p.startsWith('/api/ext/')) {
+      if (!this.sessionOf(req)) {
+        this.reject(req, res, p);
         return;
       }
       if (p === '/api/ext/stream' && req.method === 'GET') {
@@ -362,11 +458,19 @@ export class FakeBackend {
 
   private upgrade(req: IncomingMessage, socket: Socket, head: Buffer): void {
     const url = new URL(req.url ?? '/', 'http://x');
-    const ticket = url.searchParams.get('ticket') ?? '';
-    const expires = this.tickets.get(ticket);
-    this.tickets.delete(ticket); // 一次性票据
-    if (url.pathname !== '/api/ext/ws' || !expires || expires < Date.now()) {
+    if (url.pathname !== '/api/ext/ws') {
+      socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
+      return;
+    }
+    this.requests.ws++;
+    // 握手阶段校验会话 cookie，无效则拒绝握手
+    if (!this.sessionOf(req)) {
+      this.requests.unauthorized.push(url.pathname);
       socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      return;
+    }
+    if (this.fail.ws) {
+      socket.end('HTTP/1.1 500 Internal Server Error\r\n\r\n');
       return;
     }
     this.wss.handleUpgrade(req, socket, head, (ws) => {
@@ -389,6 +493,14 @@ export class FakeBackend {
 function json(res: ServerResponse, body: unknown): void {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
+}
+
+function cookieOf(req: IncomingMessage, name: string): string | undefined {
+  for (const part of (req.headers.cookie ?? '').split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === name) return v.join('=');
+  }
+  return undefined;
 }
 
 async function readBody(req: IncomingMessage): Promise<string> {

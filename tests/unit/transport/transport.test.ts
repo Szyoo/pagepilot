@@ -2,8 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeBrowser, resetFakeBrowser } from '../../helpers/fake-browser';
 
 vi.mock('wxt/browser', async () => (await import('../../helpers/fake-browser')).browserModule);
-vi.mock('../../../src/transport/auth', () => ({
-  getAccessToken: vi.fn(async () => ({ token: 'tok', userId: 'u1', expiresAt: Date.now() + 1e6 })),
+// 只替换会话校验，fetchWithSession 与错误类型用真实实现（底层 fetch 由各用例替换）
+const { checkSession } = vi.hoisted(() => ({
+  checkSession: vi.fn<() => Promise<string | null>>(),
+}));
+vi.mock('../../../src/transport/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/transport/auth')>()),
+  checkSession,
 }));
 
 const { Transport } = await import('../../../src/transport');
@@ -29,9 +34,9 @@ class FakeWebSocket {
     this.sent.push(JSON.parse(text));
   }
 
-  close() {
+  close(code = 1000) {
     this.readyState = 3;
-    this.onclose?.({ code: 1000 });
+    this.onclose?.({ code });
   }
 
   push(msg: unknown) {
@@ -48,7 +53,7 @@ let transport: InstanceType<typeof Transport>;
 let apply: ReturnType<typeof vi.fn>;
 let statuses: unknown[];
 
-async function connect(lastSeq = 7): Promise<FakeWebSocket> {
+function startTransport(lastSeq = 7): void {
   apply = vi.fn(async () => ({ type: 'applied', removedRuleIds: [] }));
   statuses = [];
   const deps: Deps = {
@@ -58,6 +63,10 @@ async function connect(lastSeq = 7): Promise<FakeWebSocket> {
   };
   transport = new Transport(deps);
   transport.start();
+}
+
+async function connect(lastSeq = 7): Promise<FakeWebSocket> {
+  startTransport(lastSeq);
   const ws = await vi.waitFor(() => {
     const w = FakeWebSocket.instances[0];
     if (!w?.kinds().includes('hello')) throw new Error('尚未连接');
@@ -72,10 +81,10 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeWebSocket);
   vi.stubGlobal(
     'fetch',
-    vi.fn(
-      async () => new Response(JSON.stringify({ ticket: 'tk 1', expiresIn: 30 }), { status: 200 }),
-    ),
+    vi.fn(async () => new Response(null, { status: 404 })),
   );
+  checkSession.mockReset();
+  checkSession.mockResolvedValue('u1');
   fakeBrowser.storage.local.data.set('settings', { backendUrl: 'https://api.example.com/' });
 });
 
@@ -85,10 +94,11 @@ afterEach(() => {
 });
 
 describe('Transport（WebSocket 最小路径）', () => {
-  it('先换取票据再连接，URL 带编码后的 ticket，随后发送 hello', async () => {
+  it('校验会话后直接连接 /api/ext/ws（不换取票据，URL 不带凭据），随后发送 hello', async () => {
     const ws = await connect(7);
-    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('https://api.example.com/api/ext/ws-ticket');
-    expect(ws.url).toBe('wss://api.example.com/api/ext/ws?ticket=tk%201');
+    expect(checkSession).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fetch), '握手靠浏览器 cookie，不再请求 ws-ticket').not.toHaveBeenCalled();
+    expect(ws.url).toBe('wss://api.example.com/api/ext/ws');
     expect(ws.sent[0]).toMatchObject({
       v: 1,
       kind: 'hello',
@@ -184,5 +194,95 @@ describe('Transport（WebSocket 最小路径）', () => {
       expect(statuses).toContainEqual({ status: 'error', error: '未配置后台地址' }),
     );
     expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+});
+
+/** 等待退避重试的上限：第一次失败后退避 2 秒 */
+const RETRY_WAIT = { timeout: 5000 };
+
+describe('Transport（门户会话）', () => {
+  it('会话已失效（checkSession 返回 null）时进入 idle 并停止，不建立连接', async () => {
+    checkSession.mockResolvedValue(null);
+    startTransport();
+    await vi.waitFor(() => expect(statuses).toEqual([{ status: 'idle' }]));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(checkSession).toHaveBeenCalledTimes(1);
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it('会话校验遇到网络错误时报告错误并退避重试，恢复后连接', async () => {
+    checkSession.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    startTransport();
+    await vi.waitFor(() =>
+      expect(statuses).toContainEqual({ status: 'error', error: 'Failed to fetch' }),
+    );
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    await vi.waitFor(
+      () => expect(statuses).toContainEqual({ status: 'connected', channel: 'websocket' }),
+      RETRY_WAIT,
+    );
+    expect(checkSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('WebSocket 以 4401 关闭时重新校验会话，失效则进入 idle 且不再重连', async () => {
+    const ws = await connect();
+    checkSession.mockResolvedValue(null);
+    ws.close(4401);
+    await vi.waitFor(() => expect(statuses.at(-1)).toEqual({ status: 'idle' }), RETRY_WAIT);
+    expect(checkSession).toHaveBeenCalledTimes(2);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it('SSE 与上行都带 cookie、不带 Authorization；通道返回 401 时重新校验会话', async () => {
+    fakeBrowser.storage.local.data.set('settings', {
+      backendUrl: 'https://api.example.com',
+      transport: 'sse',
+    });
+    let streamCalls = 0;
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/api/ext/stream')) {
+        streamCalls++;
+        // 第一次连接成功但立即结束；之后会话已失效
+        if (streamCalls === 1) return new Response(': ok\n\n', { status: 200 });
+        return new Response(null, { status: 401 });
+      }
+      if (url.endsWith('/api/ext/uplink')) return new Response(null, { status: 204 });
+      return new Response(null, { status: 404 });
+    });
+    startTransport(3);
+    await vi.waitFor(() =>
+      expect(statuses).toContainEqual({ status: 'connected', channel: 'sse' }),
+    );
+    await vi.waitFor(() => expect(streamCalls).toBe(2), RETRY_WAIT);
+    checkSession.mockResolvedValue(null);
+    await vi.waitFor(() => expect(statuses.at(-1)).toEqual({ status: 'idle' }), RETRY_WAIT);
+
+    const calls = vi.mocked(fetch).mock.calls.map(([u, init]) => ({ url: String(u), init }));
+    expect(calls[0]?.url).toBe('https://api.example.com/api/ext/stream?since=3');
+    const hello = calls.find((c) => c.url.endsWith('/api/ext/uplink'));
+    expect(JSON.parse(String(hello?.init?.body))).toMatchObject({ kind: 'hello', lastSeq: 3 });
+    for (const c of calls) {
+      expect(c.init).toMatchObject({ credentials: 'include', redirect: 'manual' });
+      expect(new Headers(c.init?.headers).has('Authorization')).toBe(false);
+    }
+  });
+
+  it('轮询返回 403 时报告无权使用并停止', async () => {
+    fakeBrowser.storage.local.data.set('settings', {
+      backendUrl: 'https://api.example.com',
+      transport: 'poll',
+    });
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 403 }));
+    startTransport();
+    await vi.waitFor(() =>
+      expect(statuses.at(-1)).toEqual({ status: 'error', error: '当前账号无权使用扩展' }),
+    );
+    const [url, init] = vi.mocked(fetch).mock.calls[0] ?? [];
+    expect(String(url)).toBe('https://api.example.com/api/ext/poll?since=7');
+    expect(init).toMatchObject({ credentials: 'include', redirect: 'manual' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(checkSession).toHaveBeenCalledTimes(1);
   });
 });
