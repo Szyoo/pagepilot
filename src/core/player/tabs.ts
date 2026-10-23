@@ -36,7 +36,7 @@ export async function ensureContent(tabId: number): Promise<void> {
     }
     await sleep(300);
   }
-  throw new Error('无法在页面中注入脚本');
+  throw new Error('无法在页面中注入脚本：可能缺少该网站的访问权限，或这是浏览器内置页面');
 }
 
 /** 发送命令；接收端不存在时尝试注入后重试 */
