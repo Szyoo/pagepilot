@@ -58,6 +58,65 @@ def test_limit_bounds(client):
 # ----- 录制固化为规则 -----
 
 
+def test_recording_to_rule_only_needs_a_name(client):
+    """只填名称：id 自动生成，匹配网站从录制里的页面地址推断，其余用默认值。"""
+    upload(client, recording("rec-1"))
+    r = client.post("/api/recordings/rec-1/rule", json={"name": "韩国签证预约"}, headers=USER)
+    assert r.status_code == 200, r.text
+    rule = r.json()["rule"]
+    assert rule["name"] == "韩国签证预约"
+    assert rule["id"].startswith("rule-") and len(rule["id"]) > len("rule-")
+    assert rule["match"]["urls"] == ["https://example.com/*"]
+    assert rule["trigger"] == "manual" and rule["inputMode"] == "auto"
+    assert rule["version"] == 1
+    # 同一份录制再生成一次，id 不重复
+    again = client.post("/api/recordings/rec-1/rule", json={"name": "韩国签证预约"}, headers=USER).json()["rule"]
+    assert again["id"] != rule["id"]
+
+
+def test_auto_id_uses_english_name_as_prefix(client):
+    upload(client, recording("rec-1"))
+    rule = client.post("/api/recordings/rec-1/rule", json={"name": "Korea Visa 2026"}, headers=USER).json()["rule"]
+    assert rule["id"].startswith("korea-visa-2026-")
+
+
+def test_inferred_urls_cover_every_site_in_the_recording(client):
+    steps = [
+        {"id": "s1", "type": "open", "url": "https://a.example.com/start?token=x"},
+        {"id": "s2", "type": "waitFor", "until": "navigation", "urlPattern": "https://b.example.com/pay*"},
+        {"id": "s3", "type": "switchTab", "urlPattern": "https://a.example.com/other*"},
+        {
+            "id": "s4",
+            "type": "if",
+            "condition": {"kind": "url", "pattern": "https://ignored.example.com/*"},
+            "then": [{"id": "s5", "type": "open", "url": "http://c.example.com/x"}],
+        },
+    ]
+    upload(client, recording("rec-1", steps))
+    rule = client.post("/api/recordings/rec-1/rule", json={"name": "多站点"}, headers=USER).json()["rule"]
+    assert rule["match"]["urls"] == [
+        "https://a.example.com/*",
+        "https://b.example.com/*",
+        "http://c.example.com/*",
+    ]
+
+
+def test_no_page_address_in_recording_asks_for_urls(client):
+    steps = [{"id": "s1", "type": "click", "target": {"strategies": [{"kind": "css", "value": "#go"}]}}]
+    upload(client, recording("rec-1", steps))
+    r = client.post("/api/recordings/rec-1/rule", json={"name": "没有地址"}, headers=USER)
+    assert r.status_code == 422
+    assert any("匹配网址" in e for e in r.json()["errors"])
+    ok = client.post("/api/recordings/rec-1/rule", json={"name": "手填", "urls": URLS}, headers=USER)
+    assert ok.status_code == 200
+
+
+def test_blank_name_is_rejected(client):
+    upload(client, recording("rec-1"))
+    r = client.post("/api/recordings/rec-1/rule", json={"name": "  "}, headers=USER)
+    assert r.status_code == 422
+
+
 def test_recording_to_rule(client):
     upload(client, recording("rec-1"))
     body = {"id": "from-rec", "name": "录制生成", "urls": URLS, "trigger": "manual", "inputMode": "trusted"}
@@ -89,9 +148,7 @@ def test_recording_to_rule_validation_errors(client):
     upload(client, recording("rec-1"))
     for body in (
         {"id": "x", "name": "x", "urls": ["<all_urls>"]},
-        {"id": "", "name": "x", "urls": URLS},
         {"id": "x", "urls": URLS},
-        {"id": "x", "name": "x", "urls": []},
         {"id": "x", "name": "x", "urls": URLS, "trigger": "sometimes"},
     ):
         r = client.post("/api/recordings/rec-1/rule", json=body, headers=USER)

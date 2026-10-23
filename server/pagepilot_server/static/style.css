@@ -259,3 +259,16 @@ tr.row.sel td:first-child {
     padding-right: 8px;
   }
 }
+
+details.adv {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+details.adv > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
