@@ -61,6 +61,17 @@ describe('上行队列', () => {
     expect(await ids()).toEqual(['c', 'd']);
   });
 
+  it('后台明确拒绝的消息（永久错误）被丢弃，不卡住后面的消息', async () => {
+    for (const i of ['a', 'b', 'c']) await queue.enqueue(msg(i));
+    const sent: string[] = [];
+    await queue.flush(async (m) => {
+      if (m.id === 'b') throw new queue.PermanentUplinkError('400');
+      sent.push(m.id);
+    });
+    expect(sent).toEqual(['a', 'c']);
+    expect(await ids()).toEqual([]);
+  });
+
   it('队列为空时 flush 不调用发送函数', async () => {
     const send = vi.fn();
     await queue.flush(send);

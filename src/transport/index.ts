@@ -11,7 +11,7 @@ import {
 import { loadSettings, type Settings } from '../shared/settings';
 import { getItem, setItem, sleep, uuid } from '../shared/storage';
 import { checkSession, Forbidden, fetchWithSession, Unauthorized } from './auth';
-import { enqueue, flush } from './queue';
+import { enqueue, flush, PermanentUplinkError } from './queue';
 
 export type Channel = 'websocket' | 'sse' | 'poll';
 
@@ -258,6 +258,10 @@ export class Transport {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(msg),
     });
+    // 4xx（除超时与限流外）是后台明确拒绝了这条消息，重发也不会成功
+    if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
+      throw new PermanentUplinkError(`上行被拒绝 ${res.status}`);
+    }
     if (!res.ok) throw new Error(`上行失败 ${res.status}`);
   }
 

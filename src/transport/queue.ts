@@ -3,6 +3,9 @@ import { getItem, setItem } from '../shared/storage';
 
 /** 上行消息的本地队列：发送失败时保留，恢复连接后按顺序重发 */
 
+/** 后台明确拒绝这条消息（格式错误、过大等）：重试没有意义，应丢弃而不是卡住队列 */
+export class PermanentUplinkError extends Error {}
+
 const KEY = 'uplinkQueue';
 const MAX = 500;
 
@@ -41,7 +44,11 @@ export async function flush(send: (msg: Uplink) => Promise<void>): Promise<void>
   for (const msg of await peekAll()) {
     try {
       await send(msg);
-    } catch {
+    } catch (e) {
+      if (e instanceof PermanentUplinkError) {
+        await remove(msg.id);
+        continue;
+      }
       return;
     }
     await remove(msg.id);
