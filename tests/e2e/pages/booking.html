@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>预约</title>
+  </head>
+  <body>
+    <h1>预约</h1>
+    <p>第 <span id="load"><!--LOAD--></span> 次加载</p>
+    <div id="slots"><!--SLOTS--></div>
+    <p id="picked"></p>
+    <script>
+      for (const b of document.querySelectorAll('.slot.available')) {
+        b.addEventListener('click', () => {
+          document.getElementById('picked').textContent = `已选择 ${b.textContent}`;
+        });
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PagePilot 管理</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>PagePilot 管理</h1>
+  <span id="me" class="me">加载中…</span>
+</header>
+<div id="error" class="error" role="alert" hidden></div>
+<div id="loading" class="loading" role="status" hidden>加载中…</div>
+<div class="tabs" role="tablist" aria-label="功能">
+  <button type="button" role="tab" data-tab="rules" aria-selected="true">规则</button>
+  <button type="button" role="tab" data-tab="recordings" aria-selected="false">录制</button>
+  <button type="button" role="tab" data-tab="captures" aria-selected="false">抓取</button>
+  <button type="button" role="tab" data-tab="runs" aria-selected="false">运行报告</button>
+</div>
+<main id="main"></main>
+<script src="app.js"></script>
+</body>
+</html>

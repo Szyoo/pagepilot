@@ -8,6 +8,7 @@ describe('ruleSchema', () => {
       name: '示例',
       version: 1,
       match: { urls: ['https://example.com/*'] },
+      requires: { secret: ['user'] },
       steps: [
         { id: 's1', type: 'open', url: 'https://example.com/login' },
         {

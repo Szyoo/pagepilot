@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>人机验证</title>
+    <style>
+      .g-recaptcha { width: 300px; height: 74px; border: 1px solid #999; }
+    </style>
+  </head>
+  <body>
+    <h1>提交前请完成验证</h1>
+    <div class="g-recaptcha" id="widget">（模拟的验证组件）</div>
+    <!-- 模拟用户完成验证：移除验证组件 -->
+    <button id="solve" type="button">我已完成验证</button>
+    <button id="go" type="button">提交</button>
+    <p id="result"></p>
+    <script>
+      window.__goClicks = 0;
+      document.getElementById('solve').addEventListener('click', () => {
+        document.getElementById('widget')?.remove();
+      });
+      document.getElementById('go').addEventListener('click', () => {
+        window.__goClicks++;
+        document.getElementById('result').textContent = '已提交';
+      });
+    </script>
+  </body>
+</html>
