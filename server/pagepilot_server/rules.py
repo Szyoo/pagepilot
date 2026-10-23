@@ -147,6 +147,7 @@ class _Checker:
             self.field(v, "visible", path, self.boolean, optional=True)
             self.field(v, "text", path, self.string, optional=True)
             self.field(v, "textMatch", path, self.string, optional=True)
+            self.field(v, "filled", path, self.boolean, optional=True)
         elif kind == "url":
             self.field(v, "pattern", path, lambda x, p: self.string(x, p, min_len=1))
         elif kind == "not":
@@ -279,7 +280,7 @@ _STEP_KEYS: dict[str, tuple[str, ...]] = {
 
 # Zod 的条件对象同样会去掉未知字段
 _CONDITION_KEYS = {
-    "element": ("kind", "target", "visible", "text", "textMatch"),
+    "element": ("kind", "target", "visible", "text", "textMatch", "filled"),
     "url": ("kind", "pattern"),
     "not": ("kind", "condition"),
     "all": ("kind", "conditions"),

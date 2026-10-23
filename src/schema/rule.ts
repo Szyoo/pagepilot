@@ -26,6 +26,8 @@ export type Condition =
       visible: boolean;
       text?: string | undefined;
       textMatch?: string | undefined;
+      /** 输入框已填满：有 maxlength 时长度达到它，否则只要非空（用于等用户输完验证码） */
+      filled?: boolean | undefined;
     }
   | { kind: 'url'; pattern: string }
   | { kind: 'not'; condition: Condition }
@@ -40,6 +42,7 @@ export const conditionSchema: z.ZodType<Condition> = z.lazy(() =>
       visible: z.boolean().default(true),
       text: z.string().optional(),
       textMatch: z.string().optional(),
+      filled: z.boolean().optional(),
     }),
     z.object({ kind: z.literal('url'), pattern: z.string().min(1) }),
     z.object({ kind: z.literal('not'), condition: conditionSchema }),

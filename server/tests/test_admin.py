@@ -111,6 +111,38 @@ def test_no_page_address_in_recording_asks_for_urls(client):
     assert ok.status_code == 200
 
 
+def test_captcha_input_becomes_handoff_not_a_secret(client):
+    """验证码输入框被录成 {{secret.x}} 时，生成规则会改成交还步骤，且不再要求保险库里有这条凭据。"""
+    steps = [
+        {"id": "s1", "type": "open", "url": "https://example.com/form"},
+        {"id": "s2", "type": "fill", "target": {"strategies": [{"kind": "css", "value": "#pw"}]}, "value": "{{secret.password}}"},
+        {"id": "s3", "type": "fill", "target": {"strategies": [{"kind": "css", "value": "#c"}]}, "value": "{{secret.captchaTxt2}}"},
+        {"id": "s4", "type": "fill", "target": {"strategies": [{"kind": "css", "value": "#sms"}]}, "value": "{{secret.sms_code}}"},
+        {
+            "id": "s5",
+            "type": "if",
+            "condition": {"kind": "url", "pattern": "https://example.com/*"},
+            "then": [
+                {"id": "s6", "type": "fill", "target": {"strategies": [{"kind": "css", "value": "#c2"}]}, "value": "{{secret.verifyCode}}"}
+            ],
+        },
+    ]
+    upload(client, recording("rec-1", steps))
+    r = client.post("/api/recordings/rec-1/rule", json={"name": "含验证码"}, headers=USER)
+    assert r.status_code == 200, r.text
+    rule = r.json()["rule"]
+    kinds = {s["id"]: s["type"] for s in rule["steps"]}
+    assert kinds == {"s1": "open", "s2": "fill", "s3": "handoff", "s4": "handoff", "s5": "if"}
+    h = rule["steps"][2]
+    assert "验证码" in h["message"]
+    # 输入框填满（有 maxlength 时达到它，否则非空）就自动继续；定位器沿用录制里的
+    assert h["resumeWhen"] == "condition"
+    assert h["until"] == {"kind": "element", "target": steps[2]["target"], "filled": True}
+    assert rule["steps"][4]["then"][0]["type"] == "handoff"
+    # 真正的密码仍是凭据，验证码类不再出现在 requires 里
+    assert rule["requires"] == {"profile": [], "secret": ["password"]}
+
+
 def test_blank_name_is_rejected(client):
     upload(client, recording("rec-1"))
     r = client.post("/api/recordings/rec-1/rule", json={"name": "  "}, headers=USER)

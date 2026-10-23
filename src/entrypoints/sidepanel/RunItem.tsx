@@ -45,6 +45,9 @@ export function RunItem({ run }: { run: RunView }) {
           {run.message ? (
             <p className="text-sm font-medium break-words text-amber-900">{run.message}</p>
           ) : null}
+          {run.autoResume ? (
+            <p className="text-xs text-amber-800">页面条件满足后会自动继续，也可以手动点「继续」</p>
+          ) : null}
           {run.needsConfirm ? (
             <Button
               variant="primary"

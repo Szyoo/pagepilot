@@ -54,6 +54,8 @@ export interface PersistedRun {
   message?: string;
   repeat?: { attempt: number; max: number };
   needsConfirm?: boolean;
+  /** 交还会在页面条件满足 / 跳转后自动继续（同时仍可手动继续） */
+  autoResume?: boolean;
   errorCode?: string;
   inputMode: 'trusted' | 'synthetic';
   phase: 'login' | 'main';
@@ -145,6 +147,7 @@ export class Runner {
         ...(r.message ? { message: r.message } : {}),
         ...(r.repeat ? { repeat: r.repeat } : {}),
         ...(r.needsConfirm !== undefined ? { needsConfirm: r.needsConfirm } : {}),
+        ...(r.autoResume ? { autoResume: true } : {}),
         ...(r.errorCode ? { errorCode: r.errorCode } : {}),
       }));
   }
@@ -777,12 +780,19 @@ export class Runner {
 
   private async handoffWait(
     ctx: Ctx,
-    opts: { message: string; needsConfirm: boolean; resumed: () => Promise<boolean> },
+    opts: {
+      message: string;
+      needsConfirm: boolean;
+      autoResume?: boolean;
+      resumed: () => Promise<boolean>;
+    },
   ): Promise<void> {
     const { run } = ctx;
     run.status = 'handoff';
     run.message = opts.message;
     run.needsConfirm = opts.needsConfirm;
+    if (opts.autoResume) run.autoResume = true;
+    else delete run.autoResume;
     run.handoffConfirmed = false;
     this.confirmed.delete(run.runId);
     await this.persist(ctx);
@@ -799,6 +809,7 @@ export class Runner {
       run.status = 'running';
       delete run.message;
       delete run.needsConfirm;
+      delete run.autoResume;
       await this.persist(ctx);
     }
   }
@@ -822,7 +833,9 @@ export class Runner {
     const navSince = Date.now();
     await this.handoffWait(ctx, {
       message: step.message,
-      needsConfirm: step.resumeWhen === 'userConfirm',
+      // 按页面条件 / 跳转自动继续的交还也保留「继续」按钮，条件迟迟不满足时可以手动继续
+      needsConfirm: true,
+      autoResume: step.resumeWhen !== 'userConfirm',
       resumed: async () => {
         if (step.resumeWhen === 'navigation') {
           const s = this.navStart.get(ctx.run.tabId);
@@ -835,6 +848,8 @@ export class Runner {
       },
     });
     await ensureContent(ctx.run.tabId).catch(() => undefined);
+    // 用户刚处理完（如输完验证码），页面上的验证码还在，短时间内不要再自动交还一次
+    ctx.captchaMutedUntil = Date.now() + 30_000;
     ctx.run.stepReports.push({
       stepId: step.id,
       status: 'succeeded',

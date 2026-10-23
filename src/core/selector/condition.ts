@@ -10,6 +10,13 @@ function textOf(el: Element): string {
   return (el as HTMLElement).innerText ?? el.textContent ?? '';
 }
 
+/** 输入框已填满：有 maxlength 时长度达到它，否则只要非空 */
+function isFilled(el: Element): boolean {
+  if (!isInput(el) && !isTextarea(el)) return false;
+  const max = el.maxLength;
+  return max > 0 ? el.value.length >= max : el.value.length > 0;
+}
+
 /**
  * 在当前 frame 内判断条件。
  * 经过跨域 iframe 的元素条件视为不成立。
@@ -28,6 +35,7 @@ export function evaluateCondition(c: Condition): boolean {
       const { element } = resolve(c.target);
       if (!element) return false;
       if (c.visible && !isVisible(element)) return false;
+      if (c.filled && !isFilled(element)) return false;
       const text = textOf(element);
       if (c.text !== undefined && !text.includes(c.text)) return false;
       if (c.textMatch !== undefined) {
