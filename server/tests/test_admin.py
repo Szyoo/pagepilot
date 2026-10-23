@@ -143,6 +143,21 @@ def test_captcha_input_becomes_handoff_not_a_secret(client):
     assert rule["requires"] == {"profile": [], "secret": ["password"]}
 
 
+def test_captcha_length_param_uses_min_length(client):
+    """验证码实际位数与输入框 maxlength 不一致时，可以明确给出位数。"""
+    steps = [
+        {"id": "s1", "type": "open", "url": "https://example.com/form"},
+        {"id": "s2", "type": "fill", "target": {"strategies": [{"kind": "css", "value": "#c"}]}, "value": "{{secret.captchaTxt2}}"},
+    ]
+    upload(client, recording("rec-1", steps))
+    rule = client.post("/api/recordings/rec-1/rule", json={"name": "五位", "captchaLength": 5}, headers=USER).json()["rule"]
+    until = rule["steps"][1]["until"]
+    assert until == {"kind": "element", "target": steps[1]["target"], "minLength": 5}
+    for bad in (0, 21, 2.5, "5", True):
+        r = client.post("/api/recordings/rec-1/rule", json={"name": "x", "captchaLength": bad}, headers=USER)
+        assert r.status_code == 422, bad
+
+
 def test_blank_name_is_rejected(client):
     upload(client, recording("rec-1"))
     r = client.post("/api/recordings/rec-1/rule", json={"name": "  "}, headers=USER)

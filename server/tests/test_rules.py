@@ -324,3 +324,22 @@ def test_element_condition_accepts_filled():
     assert validate_rule(rule) == []
     rule["steps"][0]["until"]["filled"] = "yes"
     assert validate_rule(rule)
+
+
+def test_element_condition_min_length():
+    def rule_with(value):
+        return simple_rule(
+            steps=[
+                {
+                    "id": "h",
+                    "type": "handoff",
+                    "message": "m",
+                    "resumeWhen": "condition",
+                    "until": {"kind": "element", "target": {"strategies": [{"kind": "css", "value": "#c"}]}, "minLength": value},
+                }
+            ]
+        )
+
+    assert validate_rule(rule_with(5)) == []
+    for bad in (0, -1, 2.5, "5", True):
+        assert validate_rule(rule_with(bad)), bad
