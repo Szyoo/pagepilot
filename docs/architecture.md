@@ -17,10 +17,12 @@
 Manifest V3 下 service worker 会被随时回收，页面跳转会销毁 content script，因此：
 - **回放状态由 background 持有**，每执行完一步就写入 `chrome.storage.session`，以 `runId` 标识。
 - service worker 重新启动后，从 `storage.session` 读取未完成的运行并继续。
-- content script 每次页面加载后向 background 报到（标签页 ID、frame ID、URL），由 background 下发当前应执行的步骤；content script 本身不保存流程状态。
+- content 脚本（`page-agent`）只提供原语：定位、判断条件、执行操作、检测验证组件、抓取、录制监听，不保存流程状态；每一步由 background 下发命令。页面跳转后 background 发现脚本缺失时会主动注入。
 - 跨标签页流程（`open` 新标签、`switchTab`）由 background 跟踪标签页，在目标标签页就绪后继续。
-- iframe 内的目标：content script 以 `allFrames` 注入，background 按 `locator.frame` 选择目标 frame。跨域 iframe 需要对应域名的主机权限。
-- 同一标签页同一时间只运行一条规则；同一规则在多个标签页同时运行时各自独立计数。
+- iframe 内的目标：background 先在主 frame 解析 `locator.frame`（同源 iframe 直接进入）；链路经过跨域 iframe 时，逐个子 frame 尝试解析。跨域 iframe 内的元素不支持用于条件判断（`assert`、`if`、`repeat`、`waitFor`），只支持操作类步骤；真实输入时按 iframe 的 `src` 换算坐标。
+- 同一标签页同一时间只运行一条规则；同一规则在多个标签页同时运行时各自独立计数。运行所在的标签页被关闭时，该运行中止。
+- content 脚本不在 manifest 中声明匹配范围（否则会带上全部网站的访问权限）：用户为规则授予网站权限后，background 按已授权的网站动态注册脚本（所有 frame），运行时也会主动注入。
+- `trigger: "auto"` 的规则在页面加载完成后检查并启动；同一规则在同一标签页 5 分钟内最多自动启动一次，避免循环触发。
 
 ## 输入方式
 
@@ -43,17 +45,18 @@ Manifest V3 下 service worker 会被随时回收，页面跳转会销毁 conten
 - 令牌保存：访问令牌只存在 `storage.session`（浏览器关闭即失效）；刷新令牌存在 `storage.local`。
 - 续期：访问令牌过期前用刷新令牌续期；刷新失败则进入「未登录」状态，暂停同步与自动运行，提示用户重新登录。
 - 权限：后台按用户的角色与权限决定下发哪些规则；扩展只缓存当前用户可见的规则。
-- 登出：清除令牌与规则缓存，中止所有运行；本地数据保险库不清除，但会锁定。
+- 登出：清除令牌与规则缓存，中止所有运行；本地数据保险库不清除，重新登录同一账号后继续可用。
 - 切换门户用户时，规则缓存与运行记录按用户隔离。
 
 ## 本地数据保险库
 
 个人信息（`profile`）与凭据（`secret`）只存在本机，不出现在任何上行消息中。
-- 加密：用户设置主密码，经 PBKDF2-SHA256（≥ 600,000 次迭代，随机盐）派生 AES-GCM 256 密钥；`profile` 与 `secret` 都加密存入 `storage.local`。
-- 解锁：输入主密码后，派生密钥以不可导出的 `CryptoKey` 存在内存中；service worker 被回收或超过锁定时长（默认 30 分钟）后需要重新解锁。
-- 规则需要的数据缺失或保险库处于锁定状态时，运行前提示用户补充或解锁。
+- 身份：由门户登录确认，无需额外口令；未登录时无法读写保险库。
+- 存储：数据按门户用户隔离，明文存于本机浏览器的 `storage.local`（键为 `vault:<userId>`），不上报。
+- service worker 被回收不影响保险库：数据在 `storage.local` 中，运行时按当前用户读取。
+- 规则需要的数据缺失时，运行前提示用户补充。
 - 每条 `secret` 绑定允许使用的域名列表（由用户在设置页维护）；在其他域名的页面上解析该凭据会直接失败。
-- 支持导出加密备份与导入。
+- 支持导出与导入：备份是明文 JSON，请自行妥善保管。
 
 ## 安全约束
 
