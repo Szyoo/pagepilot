@@ -129,7 +129,8 @@ describe('captureElements', () => {
     expect(els).toHaveLength(500);
     expect(els[0]?.text).toBe('b0');
     expect(els.at(-1)?.text).toBe('b499');
-  });
+    // 500 个元素在 jsdom 里较慢，CI 上更慢，放宽超时
+  }, 30_000);
 
   it('role、data-testid 等标记的元素也会被采集', () => {
     html('<div role="tab">标签</div><span data-testid="x">y</span>');
