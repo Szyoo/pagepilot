@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>输入事件</title>
+  </head>
+  <body>
+    <h1>输入事件记录</h1>
+    <input id="field" />
+    <button id="bump" type="button">计数</button>
+    <button id="go" type="button">完成</button>
+    <p id="status"></p>
+    <script>
+      // 记录收到的点击与按键事件及其 isTrusted
+      window.__events = [];
+      window.__clicks = { bump: 0, go: 0 };
+      for (const type of ['click', 'keydown', 'keyup', 'input']) {
+        document.addEventListener(
+          type,
+          (e) => {
+            const id = e.target instanceof Element ? e.target.id : '';
+            const entry = { type, id, isTrusted: e.isTrusted };
+            if (e instanceof KeyboardEvent) entry.key = e.key;
+            window.__events.push(entry);
+          },
+          true,
+        );
+      }
+      document.getElementById('bump').addEventListener('click', () => {
+        window.__clicks.bump++;
+      });
+      document.getElementById('go').addEventListener('click', () => {
+        window.__clicks.go++;
+        document.getElementById('status').textContent = 'clicked';
+      });
+    </script>
+  </body>
+</html>
