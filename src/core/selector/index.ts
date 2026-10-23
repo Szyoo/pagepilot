@@ -35,6 +35,13 @@ const INPUT_ROLE: Record<string, string> = {
 };
 
 export function roleOf(el: Element): string | undefined {
+  if (memo?.role.has(el)) return memo.role.get(el);
+  const role = computeRole(el);
+  memo?.role.set(el, role);
+  return role;
+}
+
+function computeRole(el: Element): string | undefined {
   const explicit = el.getAttribute('role');
   if (explicit) return explicit.split(' ')[0];
   const tag = el.tagName.toLowerCase();
@@ -44,8 +51,50 @@ export function roleOf(el: Element): string | undefined {
 
 const clean = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
 
+/**
+ * 批量生成定位器（如整页抓取）时，每个元素都要把同页的同类元素的角色、名称、自身文本重算一遍，
+ * 复杂度是元素数的平方。在 withLocatorCache 范围内按元素缓存这些值（页面在此期间不变）。
+ */
+interface Memo {
+  role: WeakMap<Element, string | undefined>;
+  name: WeakMap<Element, string>;
+  own: WeakMap<Element, string>;
+}
+let memo: Memo | null = null;
+
+export function withLocatorCache<T>(fn: () => T): T {
+  if (memo) return fn();
+  memo = { role: new WeakMap(), name: new WeakMap(), own: new WeakMap() };
+  try {
+    return fn();
+  } finally {
+    memo = null;
+  }
+}
+
+function ownText(el: Element): string {
+  const cached = memo?.own.get(el);
+  if (cached !== undefined) return cached;
+  const text = clean(
+    Array.from(el.childNodes)
+      .filter((n) => n.nodeType === Node.TEXT_NODE)
+      .map((n) => n.textContent)
+      .join(' '),
+  );
+  memo?.own.set(el, text);
+  return text;
+}
+
 /** 可访问名称（近似实现） */
 export function nameOf(el: Element): string {
+  const cached = memo?.name.get(el);
+  if (cached !== undefined) return cached;
+  const name = computeName(el);
+  memo?.name.set(el, name);
+  return name;
+}
+
+function computeName(el: Element): string {
   const label = clean(el.getAttribute('aria-label'));
   if (label) return label;
   const by = el.getAttribute('aria-labelledby');
@@ -106,13 +155,7 @@ function queryAll(doc: Document, strategy: Strategy): Element[] {
         const want = clean(value);
         const out: Element[] = [];
         for (const el of doc.querySelectorAll('body *')) {
-          const own = clean(
-            Array.from(el.childNodes)
-              .filter((n) => n.nodeType === Node.TEXT_NODE)
-              .map((n) => n.textContent)
-              .join(' '),
-          );
-          if (own === want) out.push(el);
+          if (ownText(el) === want) out.push(el);
         }
         return out;
       }
@@ -204,8 +247,8 @@ function cssPath(el: Element): string {
     let part = tag + classes.map((c) => `.${cssEscape(c)}`).join('');
     const parent: Element | null = cur.parentElement;
     if (parent) {
-      const same = Array.from(parent.children).filter((c) => c.matches(part));
-      if (same.length > 1)
+      const sameCount = parent.querySelectorAll(`:scope > ${part}`).length;
+      if (sameCount > 1)
         part += `:nth-of-type(${
           Array.from(parent.children)
             .filter((c) => c.tagName === cur?.tagName)
@@ -293,12 +336,7 @@ export function generateLocator(el: Element): Locator {
     push({ kind: 'aria', value: `${role}[name="${name.replace(/(["\\])/g, '\\$1')}"]` });
   }
   push({ kind: 'css', value: cssPath(el) });
-  const own = clean(
-    Array.from(el.childNodes)
-      .filter((n) => n.nodeType === Node.TEXT_NODE)
-      .map((n) => n.textContent)
-      .join(' '),
-  );
+  const own = ownText(el);
   if (own && own.length <= 40) push({ kind: 'text', value: own });
   strategies.push({ kind: 'xpath', value: xpathOf(el) });
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pagepilot-server"
-version = "0.1.0"
+version = "0.2.0"
 description = "PagePilot 扩展的配套后台：规则下发、上报接收与管理接口"
 requires-python = ">=3.12"
 license = "MIT"

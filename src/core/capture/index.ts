@@ -1,5 +1,12 @@
 import type { CaptureElement } from '../../schema/message';
-import { generateLocator, isSensitive, isVisible, nameOf, roleOf } from '../selector';
+import {
+  generateLocator,
+  isSensitive,
+  isVisible,
+  nameOf,
+  roleOf,
+  withLocatorCache,
+} from '../selector';
 
 const INTERACTIVE =
   'input, select, textarea, button, a[href], [role="button"], [role="link"], [role="checkbox"], ' +
@@ -39,6 +46,10 @@ function safeHref(href: string): string {
 }
 
 export function captureElements(): CaptureElement[] {
+  return withLocatorCache(collect);
+}
+
+function collect(): CaptureElement[] {
   const out: CaptureElement[] = [];
   for (const el of document.querySelectorAll(INTERACTIVE)) {
     if (out.length >= MAX_ELEMENTS) break;
