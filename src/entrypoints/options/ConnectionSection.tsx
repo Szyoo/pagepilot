@@ -8,6 +8,10 @@ import { useAction } from '../../shared/ui/useAction';
 import { SaveBar } from './SaveBar';
 import { Section } from './Section';
 
+// 构建期默认地址（来自本机 .env）；已配置时界面默认不显示地址输入
+const ENV_BACKEND = (import.meta.env.VITE_DEFAULT_BACKEND_URL as string | undefined) || '';
+const ENV_PORTAL = (import.meta.env.VITE_DEFAULT_PORTAL_URL as string | undefined) || '';
+
 export function ConnectionSection({ settings, bg }: { settings: Settings; bg: BgState | null }) {
   const [backendUrl, setBackendUrl] = useState(settings.backendUrl ?? '');
   const [portalUrl, setPortalUrl] = useState(settings.portalUrl ?? '');
@@ -24,12 +28,13 @@ export function ConnectionSection({ settings, bg }: { settings: Settings; bg: Bg
     const patch: Partial<Settings> = { transport, pollIntervalSec: Number(poll) };
     const b = backendUrl.trim();
     const p = portalUrl.trim();
-    if (b) patch.backendUrl = b;
-    if (p) patch.portalUrl = p;
-    // 清空时需要移除旧值：saveSettings 会与旧设置合并，因此显式置空
+    // 与构建期默认地址相同的值不保存，这样重新构建时新的默认地址能生效
+    if (b && b !== ENV_BACKEND) patch.backendUrl = b;
+    if (p && p !== ENV_PORTAL) patch.portalUrl = p;
+    // 清空或恢复默认时需要移除旧值：saveSettings 会与旧设置合并，因此显式置空
     const next = { ...patch } as Record<string, unknown>;
-    if (!b) next.backendUrl = undefined;
-    if (!p) next.portalUrl = undefined;
+    if (!b || b === ENV_BACKEND) next.backendUrl = undefined;
+    if (!p || p === ENV_PORTAL) next.portalUrl = undefined;
     await saveSettings(next as Partial<Settings>);
   };
 
@@ -120,29 +125,36 @@ export function ConnectionSection({ settings, bg }: { settings: Settings; bg: Bg
       </div>
 
       <form onSubmit={submit} className="space-y-4">
-        <Field label="门户地址" hint="登录接口所在地址，留空表示与后台地址相同">
-          {(id) => (
-            <input
-              id={id}
-              type="url"
-              className={inputClass}
-              value={portalUrl}
-              onChange={(e) => setPortalUrl(e.target.value)}
-              placeholder="https://portal.example.com"
-            />
-          )}
-        </Field>
-        <Field label="后台地址" hint="例如 https://api.example.com">
-          {(id) => (
-            <input
-              id={id}
-              type="url"
-              className={inputClass}
-              value={backendUrl}
-              onChange={(e) => setBackendUrl(e.target.value)}
-            />
-          )}
-        </Field>
+        <details open={!ENV_BACKEND} className="rounded border border-slate-200 p-3">
+          <summary className="cursor-pointer text-sm text-slate-700">
+            {ENV_BACKEND ? '高级：门户与后台地址（已有构建默认值）' : '门户与后台地址'}
+          </summary>
+          <div className="mt-3 space-y-4">
+            <Field label="门户地址" hint="登录接口所在地址，留空表示与后台地址相同">
+              {(id) => (
+                <input
+                  id={id}
+                  type="url"
+                  className={inputClass}
+                  value={portalUrl}
+                  onChange={(e) => setPortalUrl(e.target.value)}
+                  placeholder="https://portal.example.com"
+                />
+              )}
+            </Field>
+            <Field label="后台地址" hint="例如 https://api.example.com">
+              {(id) => (
+                <input
+                  id={id}
+                  type="url"
+                  className={inputClass}
+                  value={backendUrl}
+                  onChange={(e) => setBackendUrl(e.target.value)}
+                />
+              )}
+            </Field>
+          </div>
+        </details>
         <Field label="实时通道">
           {(id) => (
             <select
