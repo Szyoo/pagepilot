@@ -384,4 +384,22 @@ describe('ruleSchema 步骤约束', () => {
         .success,
     ).toBe(false);
   });
+
+  it('element 条件接受 filled，并保留在解析结果里', () => {
+    const until = { kind: 'element', target: css('#captcha'), filled: true };
+    const res = parse({
+      steps: [
+        {
+          id: 'h',
+          type: 'handoff',
+          message: '请输入验证码',
+          resumeWhen: 'condition',
+          until,
+        },
+      ],
+    });
+    expect(res.success).toBe(true);
+    const step = res.success ? res.data.steps[0] : undefined;
+    expect(step?.type === 'handoff' && step.until).toMatchObject({ kind: 'element', filled: true });
+  });
 });

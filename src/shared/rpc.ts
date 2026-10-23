@@ -37,6 +37,8 @@ export interface RunView {
   repeat?: { attempt: number; max: number };
   /** 为 true 时提示用户在步骤完成后点「继续」；false 表示等待页面条件自动继续 */
   needsConfirm?: boolean;
+  /** 条件满足或页面跳转后会自动继续（同时仍可点「继续」） */
+  autoResume?: boolean;
   errorCode?: string;
 }
 

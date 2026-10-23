@@ -133,7 +133,11 @@ def test_captcha_input_becomes_handoff_not_a_secret(client):
     rule = r.json()["rule"]
     kinds = {s["id"]: s["type"] for s in rule["steps"]}
     assert kinds == {"s1": "open", "s2": "fill", "s3": "handoff", "s4": "handoff", "s5": "if"}
-    assert rule["steps"][2]["resumeWhen"] == "userConfirm" and "验证码" in rule["steps"][2]["message"]
+    h = rule["steps"][2]
+    assert "验证码" in h["message"]
+    # 输入框填满（有 maxlength 时达到它，否则非空）就自动继续；定位器沿用录制里的
+    assert h["resumeWhen"] == "condition"
+    assert h["until"] == {"kind": "element", "target": steps[2]["target"], "filled": True}
     assert rule["steps"][4]["then"][0]["type"] == "handoff"
     # 真正的密码仍是凭据，验证码类不再出现在 requires 里
     assert rule["requires"] == {"profile": [], "secret": ["password"]}

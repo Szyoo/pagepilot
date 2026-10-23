@@ -18,6 +18,35 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
+describe('element 条件的 filled（输入框已填满）', () => {
+  const field = (attrs: string, value = '') => {
+    html(`<input id="c" ${attrs}>`);
+    mockLayout();
+    ($('#c') as HTMLInputElement).value = value;
+  };
+
+  it('有 maxlength 时，长度达到它才算填满', () => {
+    field('maxlength="6"', '12345');
+    expect(evaluateCondition(el('#c', { filled: true }))).toBe(false);
+    ($('#c') as HTMLInputElement).value = '123456';
+    expect(evaluateCondition(el('#c', { filled: true }))).toBe(true);
+  });
+
+  it('没有 maxlength 时，非空就算填满', () => {
+    field('', '');
+    expect(evaluateCondition(el('#c', { filled: true }))).toBe(false);
+    ($('#c') as HTMLInputElement).value = 'a';
+    expect(evaluateCondition(el('#c', { filled: true }))).toBe(true);
+  });
+
+  it('目标不是输入框时不成立；不写 filled 时不检查填写情况', () => {
+    html('<div id="d">123456</div>');
+    mockLayout();
+    expect(evaluateCondition(el('#d', { filled: true }))).toBe(false);
+    expect(evaluateCondition(el('#d'))).toBe(true);
+  });
+});
+
 describe('element 条件', () => {
   it('元素不存在时不成立', () => {
     mockLayout();

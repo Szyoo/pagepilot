@@ -303,3 +303,24 @@ def test_put_rejects_invalid_rule(client):
 def test_put_rejects_id_mismatch(client):
     r = client.put("/api/rules/other", json={"rule": simple_rule("r1")}, headers=ADMIN)
     assert r.status_code == 422
+
+
+def test_element_condition_accepts_filled():
+    rule = simple_rule(
+        steps=[
+            {
+                "id": "h",
+                "type": "handoff",
+                "message": "请输入验证码",
+                "resumeWhen": "condition",
+                "until": {
+                    "kind": "element",
+                    "target": {"strategies": [{"kind": "css", "value": "#c"}]},
+                    "filled": True,
+                },
+            }
+        ]
+    )
+    assert validate_rule(rule) == []
+    rule["steps"][0]["until"]["filled"] = "yes"
+    assert validate_rule(rule)

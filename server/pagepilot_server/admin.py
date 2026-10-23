@@ -36,7 +36,7 @@ MAX_INFERRED_URLS = 5
 # 验证码、短信验证码这类每次都不同的输入，不可能存进本地保险库
 _USER_INPUT_KEY = re.compile(r"captcha|verif|otp|sms|one[-_]?time|验证码", re.IGNORECASE)
 _SECRET_PLACEHOLDER = re.compile(r"^\{\{\s*secret\.([A-Za-z0-9_.-]+)\s*\}\}$")
-CAPTCHA_HANDOFF_MESSAGE = "请在页面上输入验证码，完成后点「继续」"
+CAPTCHA_HANDOFF_MESSAGE = "请在页面上输入验证码；输完会自动继续，也可以点「继续」"
 
 
 def _walk_steps(steps: list[Any]):
@@ -65,12 +65,17 @@ def captchas_to_handoff(steps: list[Any]) -> list[Any]:
         value = s.get("value")
         m = _SECRET_PLACEHOLDER.match(value) if s.get("type") == "fill" and isinstance(value, str) else None
         if m and _USER_INPUT_KEY.search(m.group(1)):
-            handoff = {
+            handoff: dict[str, Any] = {
                 "id": s.get("id"),
                 "type": "handoff",
                 "message": CAPTCHA_HANDOFF_MESSAGE,
                 "resumeWhen": "userConfirm",
             }
+            target = s.get("target")
+            if isinstance(target, dict):
+                # 输入框填满（有 maxlength 时达到它，否则非空）就自动继续；侧边栏的「继续」按钮仍可手动继续
+                handoff["resumeWhen"] = "condition"
+                handoff["until"] = {"kind": "element", "target": target, "filled": True}
             if isinstance(s.get("note"), str):
                 handoff["note"] = s["note"]
             out.append(handoff)

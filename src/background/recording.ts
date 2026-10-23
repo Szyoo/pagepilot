@@ -5,6 +5,9 @@ import type { RecordingView } from '../shared/rpc';
 
 /** 后台聚合录制：把各 frame 上报的原始操作转成规则步骤，并脱敏 */
 
+/** 验证码、短信验证码这类每次都不同的输入：不可能存进保险库，录成交还给用户的步骤 */
+const USER_INPUT_FIELD = /captcha|verif|otp|sms|one[-_]?time|验证码/i;
+
 const TYPED = new Set([
   'typed',
   'auto_bookmark',
@@ -117,6 +120,17 @@ export class RecordingSession {
         this.addStep({ id, type: 'click', target: action.locator });
         break;
       case 'fill': {
+        if (action.sensitive && USER_INPUT_FIELD.test(action.fieldName)) {
+          // 输入框填满（有 maxlength 时达到它，否则非空）就自动继续，侧边栏的「继续」仍可手动继续
+          this.addStep({
+            id,
+            type: 'handoff',
+            message: '请在页面上输入验证码；输完会自动继续，也可以点「继续」',
+            resumeWhen: 'condition',
+            until: { kind: 'element', target: action.locator, filled: true },
+          });
+          break;
+        }
         const value = action.sensitive
           ? `{{secret.${action.fieldName}}}`
           : this.maskProfile(action.value);
