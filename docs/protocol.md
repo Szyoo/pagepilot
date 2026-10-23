@@ -4,23 +4,15 @@
 
 ## 认证
 
-- 扩展通过门户 OAuth 2.0（授权码 + PKCE）登录，获得访问令牌与刷新令牌。授权服务地址默认与后台相同，可在设置页单独指定（`authUrl`）：
-  - 授权：`GET <authUrl>/oauth/authorize`，参数 `response_type=code`、`client_id`、`redirect_uri`、`code_challenge`、`code_challenge_method=S256`、`state`；
-  - 令牌：`POST <authUrl>/oauth/token`（表单），`grant_type` 为 `authorization_code`（带 `code`、`redirect_uri`、`code_verifier`）或 `refresh_token`（带 `refresh_token`）；
-  - 响应：`{ "access_token", "refresh_token", "expires_in", "user_id" }`；未提供 `user_id` 时取访问令牌（JWT）的 `sub`。
-- HTTP 请求（SSE、轮询、上报）携带请求头 `Authorization: Bearer <访问令牌>`。
-- 浏览器的 WebSocket 无法设置请求头，因此先换取一次性连接票据：
-
-```http
-POST /api/ext/ws-ticket
-Authorization: Bearer <访问令牌>
-
-200 { "ticket": "…", "expiresIn": 30 }
-```
-
-再连接 `wss://<后台>/api/ext/ws?ticket=<ticket>`。票据只能使用一次，有效期 30 秒。
-- 后台返回 `401` 或以关闭码 `4401` 断开时，扩展刷新令牌后重连；刷新失败则提示用户重新登录。
-- 后台返回 `403` 或关闭码 `4403` 表示账号无权使用扩展，扩展停止重连。
+扩展沿用门户的网页会话 cookie，不使用令牌，也不保存密码。
+- 登录：`POST <门户>/api/login`，JSON `{ "username", "password" }`，请求带 `credentials: 'include'`。成功时门户通过 `Set-Cookie` 下发会话 cookie，响应 `{ "ok": true, "id", "user", "role" }`。错误：`401` / `invalid_credentials` 账号或密码错误，`account_expired` 账号已过期，`429` 请求过于频繁。
+- 登出：`POST <门户>/api/logout`。
+- 当前用户：`GET <后台>/api/me`，响应 `{ "sub", "role"? }`，`sub` 作为用户标识。
+- 之后对后台的所有请求（WebSocket 握手、SSE、轮询、上报、`/api/me`）都不带 `Authorization` 头，靠浏览器自动带上的会话 cookie，由后台前面的门卫识别身份。
+- WebSocket 地址 `wss://<后台>/api/ext/ws`，握手带 cookie，无需票据。**注意**：浏览器只在 cookie 为 `SameSite=None; Secure` 时才会在 WebSocket 握手里带上它；门户会话 cookie 若是 `Lax`，握手会被拒，扩展会自动回退到 SSE，同步照常工作，只是每次重连多一次失败尝试，此时可在设置页直接把通道选为 SSE。SSE `GET /api/ext/stream?since=`、轮询 `GET /api/ext/poll?since=`、上行 `POST /api/ext/uplink` 同样靠 cookie。
+- 后台返回 `401` 或重定向到登录页 → 扩展变为未登录，需要重新登录。
+- 关闭码 `4401` → 会话失效，同上。
+- 后台返回 `403` 或关闭码 `4403` → 账号无权使用扩展，扩展停止重连。
 
 ## 通道
 
