@@ -3,6 +3,7 @@ import { browser } from 'wxt/browser';
 import { matchesAnyGlob } from '../../shared/glob';
 import { rpc } from '../../shared/rpc';
 import { Badge, Button, Card, ErrorText } from '../../shared/ui/components';
+import { ensureTabAccess } from '../../shared/ui/tabAccess';
 import { useAction } from '../../shared/ui/useAction';
 import { useBgState } from '../../shared/ui/useBgState';
 import { RuleItem } from './RuleItem';
@@ -44,7 +45,10 @@ export function App() {
     if (tab?.id === undefined) return;
     const tabId = tab.id;
     setCaptured(null);
-    const res = await capture.run(() => rpc('capture.page', { tabId }));
+    const res = await capture.run(async () => {
+      await ensureTabAccess(tab);
+      return rpc('capture.page', { tabId });
+    });
     if (res) setCaptured(res.count);
   };
 

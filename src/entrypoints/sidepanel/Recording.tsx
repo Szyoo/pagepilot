@@ -3,6 +3,7 @@ import { browser } from 'wxt/browser';
 import type { Locator, Step } from '../../schema/rule';
 import { type RecordingView, rpc } from '../../shared/rpc';
 import { Badge, Button, Card, ErrorText, inputClass } from '../../shared/ui/components';
+import { ensureTabAccess } from '../../shared/ui/tabAccess';
 import { useAction } from '../../shared/ui/useAction';
 
 const TYPE_LABEL: Record<Step['type'], string> = {
@@ -109,6 +110,7 @@ export function Recording({ recording }: { recording: RecordingView }) {
     void run(async () => {
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
       if (tab?.id === undefined) throw new Error('找不到当前标签页');
+      await ensureTabAccess(tab);
       await rpc('recording.start', { tabId: tab.id });
     });
 
