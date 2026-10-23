@@ -34,8 +34,16 @@ pnpm check      # 格式与静态检查
 
 ## 配置
 
-在扩展设置页填写门户地址与后台地址，用门户账号登录，并选择实时通道（WebSocket / SSE / 轮询）。
-构建期默认的后台与门户地址（`VITE_DEFAULT_BACKEND_URL`、`VITE_DEFAULT_PORTAL_URL`）可参考 `.env.example`。
+后台与门户地址在构建时从本机 `.env` 读取（参考 `.env.example`，该文件不进仓库）：
+
+```bash
+cp .env.example .env   # 然后改成实际地址
+pnpm build
+```
+
+配置后，这两个站点的访问权限会直接写进扩展，设置页只需用门户账号登录；地址输入收在「高级」里，改了 `.env` 需要重新构建。
+没有配置 `.env` 时，在设置页填写门户地址与后台地址，登录时会向你申请这两个站点的访问权限。
+实时通道（WebSocket / SSE / 轮询）也在设置页选择。
 
 ## 文档
 

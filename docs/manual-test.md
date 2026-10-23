@@ -2,11 +2,12 @@
 
 自动化测试（`pnpm test`、`pnpm test:e2e`）覆盖不到、需要真实浏览器、真实账号或真实第三方组件的部分。每条格式为“怎么做 → 期望结果”。示例地址统一用 `https://portal.example.com`（门户）、`https://app.example.com`（目标网站）或 `http://127.0.0.1`。
 
-准备：`pnpm build` 后在 `chrome://extensions` 打开开发者模式，加载 `.output/chrome-mv3`。不要加载 `.output/e2e*`，那是带测试权限的构建。
+准备：本机 `.env` 里配置 `VITE_DEFAULT_BACKEND_URL` 与 `VITE_DEFAULT_PORTAL_URL`（见 `.env.example`），`pnpm build` 后在 `chrome://extensions` 打开开发者模式，加载 `.output/chrome-mv3`。不要加载 `.output/e2e*`，那是带测试权限的构建。
 
 ## 门户登录与会话
 
-- [ ] 设置页填写门户地址 `https://portal.example.com` 与后台地址 `https://api.example.com`，输入正确账号密码，点击登录 → 弹出网站访问权限申请；授权后显示已登录及用户标识，密码输入框被清空
+- [ ] 已用 `.env` 构建：设置页只需输入账号密码，点击登录 → 不弹权限申请，显示已登录及用户标识，密码输入框被清空；「高级」里能看到构建时的门户与后台地址
+- [ ] 未配置 `.env` 的构建：设置页填写门户地址 `https://portal.example.com` 与后台地址 `https://api.example.com`，登录 → 弹出网站访问权限申请；授权后显示已登录
 - [ ] 拒绝网站访问权限 → 提示需要授权，仍为未登录
 - [ ] 输入错误密码 → 显示“账号或密码错误”，仍为未登录
 - [ ] 使用已过期的账号登录 → 显示账号已过期
