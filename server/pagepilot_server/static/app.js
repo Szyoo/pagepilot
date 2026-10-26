@@ -747,10 +747,17 @@ async function show(tab) {
   await renderers[tab]();
 }
 
+// 支持 #rules / #recordings / #captures / #runs 直达对应标签页（扩展侧边栏的「管理页」链接用）
+const tabFromHash = () => {
+  const t = location.hash.slice(1);
+  return renderers[t] ? t : 'rules';
+};
+
 async function init() {
   document.querySelectorAll('.tabs [role="tab"]').forEach((b) => {
     b.addEventListener('click', () => {
       showError('');
+      history.replaceState(null, '', '#' + b.dataset.tab);
       show(b.dataset.tab);
     });
   });
@@ -758,7 +765,7 @@ async function init() {
   if (me) {
     state.me = me;
     $('me').textContent = `${me.sub}（${me.role === 'admin' ? '管理员' : '用户'}）`;
-    await show('rules');
+    await show(tabFromHash());
   } else {
     $('me').textContent = '未知用户';
   }

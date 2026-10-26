@@ -154,6 +154,11 @@ export function startApp(): void {
       return undefined;
     },
     'auth.origins': requiredOrigins,
+    async 'connection.retry'() {
+      await requireUser();
+      transport.restart();
+      return undefined;
+    },
     async 'auth.logout'() {
       const uid = await currentUserId();
       transport.stop();
