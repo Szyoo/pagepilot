@@ -1,47 +1,144 @@
-import { useMemo } from 'react';
-import { ErrorText } from '../../shared/ui/components';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { browser } from 'wxt/browser';
 import { useBgState } from '../../shared/ui/useBgState';
-import { Recording } from './Recording';
-import { RunItem } from './RunItem';
+import { openUrl } from './actions';
+import { Banners } from './Banners';
+import { Flash, useFlash } from './Flash';
+import { useActiveTab, useBackendUrl } from './hooks';
+import { adminUrl, connectionStatus, isPanelTab, type PanelTab } from './lib';
+import { ErrorLine } from './parts';
+import { TopBar } from './TopBar';
+import { CurrentPage } from './tabs/CurrentPage';
+import { Recording } from './tabs/Recording';
+import { Rules } from './tabs/Rules';
+import { Runs } from './tabs/Runs';
+
+const STORAGE_KEY = 'sidepanel:tab';
+
+const TAB_LABEL: Record<PanelTab, string> = {
+  page: '当前页',
+  runs: '运行',
+  recording: '录制',
+  rules: '规则',
+};
+const TAB_ORDER: PanelTab[] = ['page', 'runs', 'recording', 'rules'];
 
 export function App() {
   const { state, error } = useBgState();
+  const tab = useActiveTab();
+  const backendUrl = useBackendUrl();
+  const { message, flash } = useFlash();
+  const [current, setCurrent] = useState<PanelTab>('page');
+  const [submitted, setSubmitted] = useState(false);
+  const restored = useRef(false);
+  const prevStatus = useRef(new Map<string, string>());
 
-  const runs = useMemo(() => {
-    if (!state) return [];
-    const isActive = (s: string) => s === 'running' || s === 'handoff';
-    return [...state.runs].sort((a, b) => {
-      const d = Number(isActive(b.status)) - Number(isActive(a.status));
-      return d !== 0 ? d : b.startedAt - a.startedAt;
-    });
-  }, [state]);
+  const selectTab = useCallback((next: PanelTab) => {
+    setCurrent(next);
+    restored.current = true;
+    void browser.storage.session.set({ [STORAGE_KEY]: next }).catch(() => undefined);
+  }, []);
+
+  // 启动时恢复上次的页签（用户在恢复完成前已手动选择则不覆盖）
+  useEffect(() => {
+    browser.storage.session
+      .get(STORAGE_KEY)
+      .then((res) => {
+        const saved = res[STORAGE_KEY];
+        if (!restored.current && isPanelTab(saved)) setCurrent(saved);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  // 有运行刚进入交还时自动切到「运行」页签，只在状态变化的那一刻切一次
+  useEffect(() => {
+    if (!state) return;
+    const prev = prevStatus.current;
+    let entered = false;
+    for (const r of state.runs) {
+      if (r.status === 'handoff' && prev.get(r.runId) !== 'handoff') entered = true;
+    }
+    prevStatus.current = new Map(state.runs.map((r) => [r.runId, r.status]));
+    if (entered) selectTab('runs');
+  }, [state, selectTab]);
+
+  const adminHref = adminUrl(backendUrl, current);
+  const openAdmin = () => {
+    if (adminHref) void openUrl(adminHref);
+  };
+  const recordingAdminHref = adminUrl(backendUrl, 'recording');
+  const openRecordingAdmin = () => {
+    if (recordingAdminHref) void openUrl(recordingAdminHref);
+  };
+
+  const status = useMemo(() => (state ? connectionStatus(state) : null), [state]);
+  const activeRuns = state?.runs.filter((r) => r.status === 'running' || r.status === 'handoff');
+  const hasHandoff = state?.runs.some((r) => r.status === 'handoff') ?? false;
+  const badge: Record<PanelTab, { n: number; kind: 'info' | 'alert' | '' } | null> = {
+    page: null,
+    runs: activeRuns?.length ? { n: activeRuns.length, kind: hasHandoff ? 'alert' : 'info' } : null,
+    recording: null,
+    rules: state?.rules.length ? { n: state.rules.length, kind: '' } : null,
+  };
 
   return (
-    <main className="min-h-screen space-y-4 bg-slate-50 p-3 text-slate-900">
-      <h1 className="text-base font-bold">PagePilot</h1>
-      {!state ? (
-        error ? (
-          <ErrorText>{error}</ErrorText>
+    <div className="app">
+      <TopBar
+        tone={status?.tone ?? 'gray'}
+        text={status?.text ?? '加载中…'}
+        adminHref={adminHref}
+        onOpenAdmin={openAdmin}
+      />
+      {state ? <Banners state={state} /> : null}
+      <div className="tabs" role="tablist" aria-label="侧边栏页签">
+        {TAB_ORDER.map((t) => (
+          <button
+            key={t}
+            type="button"
+            role="tab"
+            id={`tab-${t}`}
+            aria-selected={current === t}
+            aria-controls="panel-body"
+            className="tab"
+            onClick={() => selectTab(t)}
+          >
+            {TAB_LABEL[t]}
+            {badge[t] ? <span className={`count ${badge[t].kind}`}>{badge[t].n}</span> : null}
+          </button>
+        ))}
+      </div>
+      <main className="body" id="panel-body" role="tabpanel" aria-labelledby={`tab-${current}`}>
+        {!state ? (
+          error ? (
+            <ErrorLine>{error}</ErrorLine>
+          ) : (
+            <p role="status" className="loading">
+              加载中…
+            </p>
+          )
+        ) : current === 'page' ? (
+          <CurrentPage
+            state={state}
+            tab={tab}
+            flash={flash}
+            onRecordingStarted={() => selectTab('recording')}
+          />
+        ) : current === 'runs' ? (
+          <Runs state={state} />
+        ) : current === 'recording' ? (
+          <Recording
+            recording={state.recording}
+            flash={flash}
+            submitted={submitted}
+            setSubmitted={setSubmitted}
+            adminHref={recordingAdminHref}
+            onOpenAdmin={openRecordingAdmin}
+          />
         ) : (
-          <p role="status" className="text-sm text-slate-500">
-            加载中…
-          </p>
-        )
-      ) : (
-        <>
-          <section aria-labelledby="runs-title" className="space-y-2">
-            <h2 id="runs-title" className="text-sm font-semibold text-slate-700">
-              运行
-            </h2>
-            {runs.length === 0 ? (
-              <p className="text-sm text-slate-500">暂无运行记录。</p>
-            ) : (
-              runs.map((r) => <RunItem key={r.runId} run={r} />)
-            )}
-          </section>
-          <Recording recording={state.recording} />
-        </>
-      )}
-    </main>
+          <Rules state={state} adminHref={adminHref} onOpenAdmin={openAdmin} />
+        )}
+      </main>
+      <Flash message={message} />
+    </div>
   );
 }

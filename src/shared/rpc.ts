@@ -68,6 +68,8 @@ export interface RpcMethods {
   /** 登录与同步所需的网站访问权限（门户与后台所在站点，match pattern） */
   'auth.origins': { params: undefined; result: string[] };
   'auth.logout': { params: undefined; result: undefined };
+  /** 立即重新连接后台（连接出错时用） */
+  'connection.retry': { params: undefined; result: undefined };
 
   'vault.get': { params: undefined; result: LocalData };
   'vault.save': { params: LocalData; result: undefined };
