@@ -700,3 +700,81 @@ dl.meta {
   color: var(--text-3);
   padding: 32px 0;
 }
+
+/* 「请 AI 看看」面板：覆盖在页签内容上方的全高面板 */
+.assist {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  /* claude-bridge 组件的 light-dark() 跟随这里的配色方案，深色模式随系统 */
+  color-scheme: light dark;
+}
+.assist-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.assist-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.assist-setup {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+.assist-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.assist-check input {
+  margin-top: 3px;
+}
+.assist-sent {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.assist-chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.assist-chat[hidden] {
+  display: none;
+}
+.assist-chat > .bridge {
+  flex: 1;
+  min-height: 0;
+}
+
+/* claude-bridge 组件的主题：--bridge-* 映射到侧边栏 token（深色模式随 :root 的 token 一起切换）。
+   弹层挂在 body 上、带 .bridge-root，因此两个类都要覆盖；:root 前缀用来压过 vendor 样式 */
+:root .bridge,
+:root .bridge-root {
+  color-scheme: light dark;
+  --bridge-bg: var(--bg);
+  --bridge-panel: var(--bg-2);
+  --bridge-fg: var(--text);
+  --bridge-muted: var(--text-3);
+  --bridge-border: var(--line);
+  --bridge-accent: var(--primary);
+  --bridge-accent-fg: var(--on-primary);
+  --bridge-err: var(--red);
+  --bridge-ok: var(--green);
+  --chat-gutter: 12px;
+}

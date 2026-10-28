@@ -18,6 +18,8 @@ export type ContentCommand =
   | { cmd: 'captcha' }
   | { cmd: 'idle' }
   | { cmd: 'capture' }
+  /** 只给「请 AI 看看」用的页面概要，不上报后台 */
+  | { cmd: 'inspect' }
   | { cmd: 'recorder'; on: boolean };
 
 export type Act =
@@ -74,6 +76,19 @@ export type RecordedAction =
 export interface CaptureResult {
   elements: CaptureElement[];
   title: string;
+}
+
+/** 页面概要里的一个元素：不带属性、定位器与任何输入值；敏感元素不带文字 */
+export interface InspectElement {
+  tag: string;
+  role?: string;
+  /** 名称或文字，最多 60 字 */
+  text?: string;
+  sensitive: boolean;
+}
+
+export interface InspectResult {
+  elements: InspectElement[];
 }
 
 export const CONTENT_MESSAGE = 'pagepilot:content';

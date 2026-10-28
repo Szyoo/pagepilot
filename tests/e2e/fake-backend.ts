@@ -213,6 +213,11 @@ export class FakeBackend {
     return this.emit({ kind: 'snapshot', rules });
   }
 
+  /** 请求是否带有效的门户会话 cookie（假 bridge 用它判断登录；cookie 不区分端口） */
+  isSignedIn(req: IncomingMessage): boolean {
+    return this.sessionOf(req) !== undefined;
+  }
+
   /** 当前有效会话数 */
   get sessionCount(): number {
     return this.sessions.size;

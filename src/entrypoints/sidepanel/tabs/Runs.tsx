@@ -1,12 +1,12 @@
 import { useMemo } from 'react';
-import { type BgState, rpc } from '../../../shared/rpc';
+import { type BgState, type RunView, rpc } from '../../../shared/rpc';
 import { useAction } from '../../../shared/ui/useAction';
 import { useNow } from '../hooks';
 import { isActiveRun, sortRuns } from '../lib';
 import { Btn, Empty, ErrorLine } from '../parts';
 import { RunCard } from '../RunCard';
 
-export function Runs({ state }: { state: BgState }) {
+export function Runs({ state, onAssist }: { state: BgState; onAssist?: (run: RunView) => void }) {
   const clearAll = useAction();
   const runs = useMemo(() => sortRuns(state.runs), [state.runs]);
   const hasActive = runs.some(isActiveRun);
@@ -21,7 +21,12 @@ export function Runs({ state }: { state: BgState }) {
       <ul style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {runs.map((r) => (
           <li key={r.runId}>
-            <RunCard run={r} rule={state.rules.find((x) => x.id === r.ruleId)} now={now} />
+            <RunCard
+              run={r}
+              rule={state.rules.find((x) => x.id === r.ruleId)}
+              now={now}
+              onAssist={onAssist}
+            />
           </li>
         ))}
       </ul>

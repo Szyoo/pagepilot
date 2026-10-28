@@ -1,5 +1,5 @@
 import { browser } from 'wxt/browser';
-import { captureElements } from '../core/capture';
+import { captureElements, inspectElements } from '../core/capture';
 import { frameOffsetByUrl, performAct, prepareTarget } from '../core/player/actions';
 import { detectCaptcha } from '../core/player/captcha';
 import { createRecorder } from '../core/recorder';
@@ -11,6 +11,7 @@ import {
   type ContentCommand,
   type ContentEvent,
   EVENT_MESSAGE,
+  type InspectResult,
   type PingResult,
   type ProbeResult,
 } from '../shared/content-api';
@@ -76,6 +77,8 @@ export default defineUnlistedScript(() => {
           return { idle: document.readyState === 'complete' && Date.now() - lastMutation > 500 };
         case 'capture':
           return { elements: captureElements(), title: document.title } satisfies CaptureResult;
+        case 'inspect':
+          return { elements: inspectElements() } satisfies InspectResult;
         case 'recorder':
           if (cmd.on) recorder.start();
           else recorder.stop();

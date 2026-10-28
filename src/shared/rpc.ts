@@ -1,6 +1,7 @@
 import { browser } from 'wxt/browser';
 import type { LocalData } from '../schema/profile';
 import type { Rule, Step } from '../schema/rule';
+import type { InspectResult } from './content-api';
 
 /** 界面看到的规则摘要 */
 export interface RuleView {
@@ -114,6 +115,8 @@ export interface RpcMethods {
 
   /** 抓取当前标签页并上报，返回元素数量 */
   'capture.page': { params: { tabId: number }; result: { count: number } };
+  /** 「请 AI 看看」用的页面概要（最多 120 个元素、不带输入值），只返回给侧边栏，不上报后台 */
+  'capture.inspect': { params: { tabId: number }; result: InspectResult };
 
   'recording.start': { params: { tabId: number }; result: undefined };
   'recording.stop': { params: undefined; result: undefined };
