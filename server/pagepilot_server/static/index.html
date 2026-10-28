@@ -1,26 +1,60 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="nebula">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="pagepilot-sso" content="{{SSO}}">
+<meta name="pagepilot-portal" content="{{PORTAL}}">
 <title>PagePilot 管理</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="style.css">
+<script>
+  // 首帧前恢复外观三项，避免闪烁；持久化由 boot.js 的 mountChrome 接管
+  (() => {
+    const d = document.documentElement;
+    let t = null;
+    let p = null;
+    let s = null;
+    try {
+      t = localStorage.getItem("pagepilot_theme");
+      p = localStorage.getItem("pagepilot_palette");
+      s = localStorage.getItem("pagepilot_scheme");
+    } catch (_e) {
+      // 存储不可用时按默认外观
+    }
+    if (t) d.setAttribute("data-theme", t);
+    if (p && p !== "default") d.setAttribute("data-palette", p);
+    d.setAttribute("data-scheme", s === "dark" || s === "light" ? s : "auto");
+  })();
+</script>
+<link rel="preconnect" href="{{DESIGN_ORIGIN}}" crossorigin>
+<link rel="stylesheet" href="{{DESIGN_BASE}}/tokens.css">
+<link rel="stylesheet" href="{{DESIGN_BASE}}/components.css">
+<link rel="stylesheet" href="/style.css">
+<script type="importmap">{"imports": {"@szyyw/design/": "{{IMPORTMAP_BASE}}/"}}</script>
 </head>
 <body>
-<header class="top">
-  <h1>PagePilot 管理</h1>
-  <span id="me" class="me">加载中…</span>
-</header>
-<div id="error" class="error" role="alert" hidden></div>
-<div id="loading" class="loading" role="status" hidden>加载中…</div>
-<div class="tabs" role="tablist" aria-label="功能">
-  <button type="button" role="tab" data-tab="rules" aria-selected="true">规则</button>
-  <button type="button" role="tab" data-tab="recordings" aria-selected="false">录制</button>
-  <button type="button" role="tab" data-tab="captures" aria-selected="false">抓取</button>
-  <button type="button" role="tab" data-tab="runs" aria-selected="false">运行报告</button>
+<div class="bg-layer"></div>
+<div class="app-frame">
+  <header class="app-header">
+    <div class="app-brand">
+      <h1 class="app-title">PagePilot</h1>
+      <span id="me" class="app-sub">加载中…</span>
+    </div>
+  </header>
+  <main class="page">
+    <div id="error" class="callout err" role="alert" hidden></div>
+    <div id="loading" class="loading muted" role="status" hidden><span class="spinner"></span> 加载中…</div>
+    <div class="tabs scroll" role="tablist" aria-label="功能">
+      <button type="button" class="tab" role="tab" data-tab="rules" aria-selected="true">规则</button>
+      <button type="button" class="tab" role="tab" data-tab="recordings" aria-selected="false">录制</button>
+      <button type="button" class="tab" role="tab" data-tab="captures" aria-selected="false">抓取</button>
+      <button type="button" class="tab" role="tab" data-tab="runs" aria-selected="false">运行报告</button>
+    </div>
+    <div id="main"></div>
+  </main>
 </div>
-<main id="main"></main>
-<script src="app.js"></script>
+<script type="module" src="/boot.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>

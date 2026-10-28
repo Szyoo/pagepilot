@@ -1,4 +1,4 @@
-"""管理接口：规则、录制、抓取、运行报告。
+"""管理接口：规则、录制、抓取、运行报告、AI 解读。
 
 普通用户只能管理自己的数据（共享规则可见但不能修改）；管理员可以管理全部。
 找不到或无权访问一律 404。
@@ -16,8 +16,9 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 
+from . import ai
 from .auth import Principal, require_user
-from .db import Database
+from .db import Database, now_ms
 from .events import RuleError, delete_rule, existing_version, put_rule, rule_row
 from .rules import required_placeholders, validate_rule
 
@@ -250,6 +251,51 @@ def _delete(db: Database, table: _Table, p: Principal, item_id: str) -> Response
     return Response(status_code=204)
 
 
+# ----- AI 解读缓存 -----
+
+
+def _load_note(db: Database, kind: str, ref: str, owner: str) -> sqlite3.Row | None:
+    with db.tx() as c:
+        return c.execute(
+            "SELECT * FROM ai_notes WHERE kind = ? AND ref = ? AND owner_sub = ?", (kind, ref, owner)
+        ).fetchone()
+
+
+def _note_out(row: sqlite3.Row) -> dict[str, Any]:
+    body = json.loads(row["body"])
+    return {"summary": body.get("summary") or "", "steps": body.get("steps") or [],
+            "model": row["model"], "createdAt": row["created_at"]}
+
+
+def _store_note(db: Database, kind: str, ref: str, owner: str, digest: str, notes: ai.Notes, model: str) -> sqlite3.Row:
+    with db.tx() as c:
+        c.execute(
+            "INSERT INTO ai_notes (kind, ref, owner_sub, digest, body, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(kind, ref) DO UPDATE SET owner_sub = excluded.owner_sub, digest = excluded.digest,"
+            " body = excluded.body, model = excluded.model, created_at = excluded.created_at",
+            (kind, ref, owner, digest, json.dumps(notes.to_body(), ensure_ascii=False), model, now_ms()),
+        )
+        return c.execute("SELECT * FROM ai_notes WHERE kind = ? AND ref = ?", (kind, ref)).fetchone()
+
+
+def _ai_error(e: ai.AiError) -> JSONResponse:
+    return JSONResponse({"detail": e.detail}, status_code=e.status)
+
+
+async def _describe(request: Request, kind: str, ref: str, owner: str, steps: list[Any],
+                    refresh: bool) -> tuple[ai.Notes, sqlite3.Row, bool]:
+    """取缓存（脱敏后输入的摘要一致时）或调用 AI 并写入缓存。返回 (结果, 缓存行, 是否命中缓存)。"""
+    state = request.app.state
+    redacted = ai.redact_steps(steps)
+    digest = ai.digest(redacted)
+    if not refresh:
+        row = _load_note(state.db, kind, ref, owner)
+        if row is not None and row["digest"] == digest:
+            return ai.Notes.from_body(json.loads(row["body"])), row, True
+    notes, model = await ai.describe(ai.get_client(state), redacted, state.config.ai_timeout)
+    return notes, _store_note(state.db, kind, ref, owner, digest, notes, model), False
+
+
 def make_router() -> APIRouter:
     router = APIRouter()
 
@@ -289,7 +335,54 @@ def make_router() -> APIRouter:
             delete_rule(state.db, state.hub, p, rule_id, keep=state.config.events_keep)
         except RuleError as e:
             return _rule_error(e)
+        with state.db.tx() as c:
+            c.execute("DELETE FROM ai_notes WHERE kind = 'rule' AND ref = ?", (rule_id,))
         return Response(status_code=204)
+
+    @router.post("/api/rules/{rule_id}/describe")
+    async def describe_rule(request: Request, rule_id: str, refresh: int = 0,
+                            p: Principal = Depends(require_user)):
+        """生成每步描述，填进空的 note，保存为新版本（推送给扩展）。"""
+        db: Database = request.app.state.db
+        with db.tx() as c:
+            row = c.execute("SELECT * FROM rules WHERE id = ?", (rule_id,)).fetchone()
+        if row is None or not (p.is_admin or row["owner_sub"] == p.sub):
+            return JSONResponse({"detail": "规则不存在"}, status_code=404)
+        if row["shared"] and not p.is_admin:
+            return JSONResponse({"detail": "只有管理员可以修改共享规则"}, status_code=403)
+        rule = json.loads(row["body"])
+        login = rule.get("login") if isinstance(rule.get("login"), dict) else None
+        login_steps = login.get("steps") if login and isinstance(login.get("steps"), list) else []
+        steps = rule.get("steps") if isinstance(rule.get("steps"), list) else []
+        try:
+            notes, note_row, cached = await _describe(request, "rule", rule_id, row["owner_sub"],
+                                                      [*login_steps, *steps], refresh == 1)
+        except ai.AiError as e:
+            return _ai_error(e)
+        texts = notes.text_map(ai_only=True)
+        new_rule = dict(rule)
+        new_rule["steps"], added = ai.apply_notes(steps, texts)
+        if login is not None:
+            new_login = dict(login)
+            new_login["steps"], n = ai.apply_notes(login_steps, texts)
+            new_rule["login"] = new_login
+            added += n
+        extra = {"summary": notes.summary, "added": added, "model": note_row["model"], "cached": cached}
+        if not added:
+            return {"rule": rule, **extra}
+        # AI 调用期间规则可能被改过：以开始时的版本为准，期间有新版本时 put_rule 返回 409
+        new_rule["version"] = row["version"] + 1
+        saved = _save_rule(request, p, new_rule, None)
+        if isinstance(saved, JSONResponse):
+            return saved
+        return {"rule": saved["rule"], **extra}
+
+    # ----- AI -----
+
+    @router.get("/api/ai/status")
+    async def ai_status(request: Request, p: Principal = Depends(require_user)):
+        client = ai.get_client(request.app.state)
+        return {"available": client is not None, "model": client.model if client else None}
 
     # ----- 录制 -----
 
@@ -299,11 +392,36 @@ def make_router() -> APIRouter:
 
     @router.get("/api/recordings/{recording_id}")
     async def get_recording(request: Request, recording_id: str, p: Principal = Depends(require_user)):
-        return _get(request.app.state.db, RECORDINGS, p, recording_id)
+        db: Database = request.app.state.db
+        detail = _get(db, RECORDINGS, p, recording_id)
+        note = _load_note(db, "recording", recording_id, detail["ownerSub"])
+        if note is not None:
+            detail["ai"] = _note_out(note)
+        return detail
 
     @router.delete("/api/recordings/{recording_id}", status_code=204)
     async def delete_recording(request: Request, recording_id: str, p: Principal = Depends(require_user)):
-        return _delete(request.app.state.db, RECORDINGS, p, recording_id)
+        db: Database = request.app.state.db
+        with db.tx() as c:
+            row = RECORDINGS.find(c, p, recording_id)
+            c.execute("DELETE FROM recordings WHERE rowid = ?", (row["_rowid"],))
+            c.execute("DELETE FROM ai_notes WHERE kind = 'recording' AND ref = ? AND owner_sub = ?",
+                      (recording_id, row["owner_sub"]))
+        return Response(status_code=204)
+
+    @router.post("/api/recordings/{recording_id}/describe")
+    async def describe_recording(request: Request, recording_id: str, refresh: int = 0,
+                                 p: Principal = Depends(require_user)):
+        detail = _get(request.app.state.db, RECORDINGS, p, recording_id)
+        steps = detail.get("steps") if isinstance(detail.get("steps"), list) else []
+        if not ai.flat_steps(steps):
+            return _invalid(["steps: 录制里没有步骤"])
+        try:
+            _, row, cached = await _describe(request, "recording", recording_id, detail["ownerSub"], steps,
+                                             refresh == 1)
+        except ai.AiError as e:
+            return _ai_error(e)
+        return {**_note_out(row), "cached": cached}
 
     @router.post("/api/recordings/{recording_id}/rule")
     async def recording_to_rule(request: Request, recording_id: str, body: dict[str, Any] = Body(...),
@@ -317,6 +435,11 @@ def make_router() -> APIRouter:
         ):
             return _invalid(["captchaLength: 需要 1 到 20 的整数"])
         steps = captchas_to_handoff(steps, captcha_length)
+        # 已有 AI 解读时把每步的描述写进 note（不调用 AI，保持快速；已有 note 不覆盖）
+        note = _load_note(db, "recording", recording_id, recording["ownerSub"])
+        if note is not None:
+            texts = ai.Notes.from_body(json.loads(note["body"])).text_map(ai_only=True)
+            steps, _ = ai.apply_notes(steps, texts)
         name = body.get("name")
         rule_id = body.get("id")
         # 只需要名称：id 与匹配网站留空时自动生成 / 从录制推断

@@ -46,7 +46,15 @@ export function RunCard({
       </div>
 
       <dl className="meta">
-        {run.stepId ? (
+        {run.stepNote ? (
+          <div>
+            <dt>{active ? '正在：' : '停在：'}</dt>
+            <dd>
+              {run.stepNote}
+              {run.stepId ? <span className="muted small">（{run.stepId}）</span> : null}
+            </dd>
+          </div>
+        ) : run.stepId ? (
           <div>
             <dt>当前步骤：</dt>
             <dd>{run.stepId}</dd>

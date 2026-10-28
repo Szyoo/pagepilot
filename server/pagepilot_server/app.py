@@ -15,6 +15,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 
 from . import __version__, admin, ext
+from .design import render_shell
 from .auth import Principal, require_user
 from .config import Config
 from .db import Database
@@ -95,7 +96,8 @@ def create_app(config: Config | None = None, static_dir: Path | None = None) -> 
     async def index(p: Principal = Depends(require_user)):
         page = static_dir / "index.html"
         if page.is_file():
-            return FileResponse(page, media_type="text/html; charset=utf-8", headers=SECURITY_HEADERS)
+            body = render_shell(page.read_text(encoding="utf-8"), sso=config.sso)
+            return HTMLResponse(body, headers=SECURITY_HEADERS)
         return HTMLResponse(PLACEHOLDER_HTML, headers=SECURITY_HEADERS)
 
     @app.get("/{name}")
