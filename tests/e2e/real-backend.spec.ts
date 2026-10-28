@@ -3,7 +3,7 @@
 
 import type { RawRule } from './fake-backend';
 import { type ExtensionHelper, fakeValue } from './fixtures';
-import { SESSION_COOKIE } from './gate';
+import { FAKE_PORTAL, SESSION_COOKIE } from './gate';
 import { expect, SKIP_REASON, serverAvailable, test } from './real-backend.fixtures';
 import { captchaRule, loginRule } from './rules';
 
@@ -459,6 +459,18 @@ test('管理页：带门户会话访问门卫地址，页面加载并列出规�
     data: { username: admin.username, password: admin.password },
   });
   expect(login.status()).toBe(200);
+  // 设计包的账户菜单向门户读 /api/me：线上与管理页同属一个站点，测试里拦截并返回一个门户用户
+  await page.route(`${FAKE_PORTAL}/**`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: {
+        'access-control-allow-origin': gate.url,
+        'access-control-allow-credentials': 'true',
+      },
+      body: JSON.stringify({ id: admin.sub, user: admin.username, role: 'admin', apps: [] }),
+    }),
+  );
   await page.goto(`${gate.url}/`);
 
   await expect(page).toHaveTitle('PagePilot 管理');
