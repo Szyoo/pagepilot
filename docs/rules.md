@@ -2,6 +2,8 @@
 
 规则是一份 JSON，描述「在哪些页面、按什么步骤」自动执行。定义见 `src/schema/rule.ts`，安全约束见 [architecture.md](architecture.md#安全约束)。
 
+配置了 AI 时，可以在后台管理页的规则详情里用自然语言修改规则（「AI 修改」），看过前后对比再保存为新版本，见 [backend.md](backend.md#ai-修改)。
+
 ## 顶层结构
 
 | 字段        | 类型 / 默认值                                           | 说明                                                           |

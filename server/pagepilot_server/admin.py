@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 
-from . import ai
+from . import ai, ai_edit
 from .auth import Principal, require_user
 from .db import Database, now_ms
 from .events import RuleError, delete_rule, existing_version, put_rule, rule_row
@@ -411,6 +411,37 @@ def make_router() -> APIRouter:
         if isinstance(saved, JSONResponse):
             return saved
         return {"rule": saved["rule"], **extra}
+
+    @router.post("/api/rules/{rule_id}/ai-edit")
+    async def ai_edit_rule(request: Request, rule_id: str, body: dict[str, Any] = Body(...),
+                           p: Principal = Depends(require_user)):
+        """按自然语言要求修改规则，返回提案（不保存；保存由管理页确认后走 PUT）。"""
+        instruction = body.get("instruction")
+        if not isinstance(instruction, str) or not instruction.strip():
+            return _invalid(["instruction: 请填写修改要求"])
+        instruction = instruction.strip()
+        if len(instruction) > ai_edit.MAX_INSTRUCTION:
+            return _invalid([f"instruction: 不能超过 {ai_edit.MAX_INSTRUCTION} 个字"])
+        state = request.app.state
+        with state.db.tx() as c:
+            row = c.execute("SELECT * FROM rules WHERE id = ?", (rule_id,)).fetchone()
+        if row is None or not (p.is_admin or row["owner_sub"] == p.sub):
+            return JSONResponse({"detail": "规则不存在"}, status_code=404)
+        if row["shared"] and not p.is_admin:
+            return JSONResponse({"detail": "只有管理员可以修改共享规则"}, status_code=403)
+        base = body.get("base")
+        if base is None:
+            base = json.loads(row["body"])
+        elif not isinstance(base, dict):
+            return _invalid(["base: 需要规则对象"])
+        elif base.get("id") != rule_id:
+            return _invalid([f"base.id: 必须是同一条规则（{rule_id}）"])
+        try:
+            proposal = await ai_edit.propose_edit(ai.get_client(state), base, instruction, rule_id,
+                                                  row["version"] + 1, state.config.ai_timeout)
+        except ai.AiError as e:
+            return _ai_error(e)
+        return proposal.to_body()
 
     # ----- AI -----
 

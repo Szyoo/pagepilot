@@ -348,7 +348,7 @@ function ruleEditor(d, reload) {
       h(
         'div',
         { class: 'callout ok' },
-        h('strong', { text: '已保存为新版本并下发到扩展' }),
+        h('strong', { text: state.ruleNote.title || '已保存为新版本并下发到扩展' }),
         h('p', { class: 'ai-summary', text: state.ruleNote.summary || '' }),
       ),
     );
@@ -474,12 +474,295 @@ function ruleEditor(d, reload) {
     steps,
     describe && h('p', { class: 'hint', text: AI_PRIVACY }),
     aiOut,
+    state.ai.available && !d.isNew && aiEditBox(d, ta, reload),
     h('h4', { class: 'sub-title muted', text: '规则 JSON' }),
     ta,
     shared,
     buttons,
     out,
   ];
+}
+
+// ---------- AI 修改：提案与前后对比 ----------
+const AI_EDIT_PRIVACY = '发送前会把规则里你录入的具体值换成记号，不会发给 AI；网址只发网站与路径。';
+const STEP_CHILDREN = ['then', 'else', 'steps'];
+
+// 按出现顺序列出全部步骤（含 login.steps 与嵌套），pos 是给人看的位置（如 “6.1”“登录 1”）
+function flatRuleSteps(rule) {
+  const out = [];
+  const walk = (steps, prefix) => {
+    if (!Array.isArray(steps)) return;
+    steps.forEach((s, i) => {
+      if (!s || typeof s !== 'object') return;
+      const pos = prefix + (i + 1);
+      out.push({ step: s, pos });
+      for (const k of STEP_CHILDREN)
+        if (Array.isArray(s[k])) walk(s[k], pos + (k === 'else' ? '.否则 ' : '.'));
+    });
+  };
+  walk(rule?.login?.steps, '登录 ');
+  walk(rule?.steps, '');
+  return out;
+}
+const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function shortValue(v) {
+  if (v === undefined) return '（无）';
+  const t = typeof v === 'string' ? v : JSON.stringify(v);
+  return t.length > 160 ? t.slice(0, 159) + '…' : t;
+}
+// 两个对象的字段级差异（跳过 skip 里的键）
+function fieldChanges(before, after, skip) {
+  const keys = [...new Set([...Object.keys(before || {}), ...Object.keys(after || {})])];
+  return keys
+    .filter((k) => !skip.includes(k) && !sameJson(before?.[k], after?.[k]))
+    .map((k) => ({ key: k, before: before?.[k], after: after?.[k] }));
+}
+// 按步骤 id 对比：新增 / 删除 / 修改（修改只看步骤自身字段，子步骤单独对比）
+function diffSteps(oldRule, newRule) {
+  const olds = new Map(flatRuleSteps(oldRule).map((e) => [e.step.id, e]));
+  const news = flatRuleSteps(newRule);
+  const ids = new Set(news.map((e) => e.step.id));
+  const items = [];
+  for (const e of news) {
+    const old = olds.get(e.step.id);
+    if (!old) items.push({ kind: 'add', entry: e });
+    else {
+      const fields = fieldChanges(old.step, e.step, ['id', ...STEP_CHILDREN]);
+      if (fields.length) items.push({ kind: 'mod', entry: e, fields });
+    }
+  }
+  for (const [id, e] of olds) if (!ids.has(id)) items.push({ kind: 'del', entry: e });
+  return items;
+}
+function diffTop(oldRule, newRule) {
+  const top = fieldChanges(oldRule, newRule, ['steps', 'login', 'version']);
+  const ol = oldRule?.login;
+  const nl = newRule?.login;
+  if (!ol !== !nl)
+    top.push({
+      key: 'login',
+      before: ol ? '（有登录流程）' : undefined,
+      after: nl ? '（有登录流程）' : undefined,
+    });
+  else if (ol && nl)
+    for (const f of fieldChanges(ol, nl, ['steps'])) top.push({ ...f, key: 'login.' + f.key });
+  return top;
+}
+const DIFF_LABEL = { add: ['新增', 'green'], del: ['删除', 'red'], mod: ['修改', 'amber'] };
+function fieldList(fields) {
+  return h(
+    'ul',
+    { class: 'diff-fields small' },
+    fields.map((f) =>
+      h(
+        'li',
+        {},
+        h('code', { text: f.key }),
+        '：',
+        h('span', { class: 'diff-old', text: shortValue(f.before) }),
+        ' → ',
+        h('span', { class: 'diff-new', text: shortValue(f.after) }),
+      ),
+    ),
+  );
+}
+function diffView(oldRule, newRule) {
+  const steps = diffSteps(oldRule, newRule);
+  const top = diffTop(oldRule, newRule);
+  const box = h('div', { class: 'diff' });
+  if (!steps.length && !top.length) {
+    box.append(h('p', { class: 'muted', text: '与当前保存的版本相比没有变化。' }));
+    return box;
+  }
+  if (steps.length)
+    box.append(
+      h(
+        'ul',
+        { class: 'diff-list' },
+        steps.map(({ kind, entry, fields }) => {
+          const [label, color] = DIFF_LABEL[kind];
+          const s = entry.step;
+          return h(
+            'li',
+            { class: 'diff-item ' + kind },
+            h(
+              'div',
+              { class: 'diff-head' },
+              h('span', { class: 'pill ' + color, text: label }),
+              h('span', { class: 'num', text: `第 ${entry.pos} 步` }),
+              h('span', { class: 'muted small', text: `${s.type || '?'} · ${s.id}` }),
+            ),
+            s.note && h('div', { class: 'diff-note', text: s.note }),
+            kind === 'add' &&
+              h('div', { class: 'small muted step-sub' }, withPlaceholders(stepBrief(s))),
+            fields && fieldList(fields),
+          );
+        }),
+      ),
+    );
+  if (top.length)
+    box.append(h('h5', { class: 'sub-title muted', text: '其他字段' }), fieldList(top));
+  return box;
+}
+
+function aiEditBox(d, editor, reload) {
+  const id = d.rule.id;
+  let base = null; // 在上一次提案上继续改时的规则
+  const input = h('textarea', {
+    class: 'ai-edit-input',
+    rows: '3',
+    'aria-label': 'AI 修改要求',
+    maxlength: '2000',
+    placeholder: '例如：第 5 步之后加一个每 10 秒刷新、直到出现可预约名额的循环，最多 200 次',
+  });
+  const baseHint = h('p', { class: 'hint', hidden: true });
+  const out = h('div', { class: 'ai-out', 'aria-live': 'polite' });
+  const run = h('button', { class: 'btn btn-small', type: 'button', text: '生成修改' });
+  const fail = (text) => h('div', { class: 'callout err', role: 'alert', text });
+  const setBase = (rule) => {
+    base = rule;
+    baseHint.hidden = !rule;
+    baseHint.textContent = rule ? '将在上一次的提案（未保存）基础上继续修改。' : '';
+  };
+
+  const showProposal = (res) => {
+    const errs = Array.isArray(res.errors) ? res.errors : [];
+    const changes = Array.isArray(res.changes) ? res.changes : [];
+    const save = h('button', {
+      class: 'btn btn-small',
+      type: 'button',
+      text: '保存为新版本',
+      disabled: errs.length ? true : null,
+    });
+    const msg = h('div', { 'aria-live': 'polite' });
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      msg.replaceChildren();
+      try {
+        const saved = await api('PUT', '/api/rules/' + encodeURIComponent(id), { rule: res.rule });
+        state.draft = { rule: saved.rule, shared: !!saved.shared, isNew: false };
+        state.ruleNote = {
+          id,
+          title: `已保存为第 ${saved.rule.version} 版并下发到扩展`,
+          summary: res.summary,
+        };
+        await reload();
+      } catch (e) {
+        save.disabled = false;
+        if (e.status === 409)
+          msg.replaceChildren(fail('规则在此期间被改过（版本冲突），请刷新后重新生成修改。'));
+        else {
+          const list = errorList(e.body);
+          msg.replaceChildren(fail(list.length ? list.join('\n') : e.message));
+        }
+      }
+    });
+    // 参数里有条件项（没有校验错误时是 false），交给 replaceChildren 前去掉，否则会显示成文字“false”
+    const proposalParts = [
+      h(
+        'div',
+        { class: 'callout info' },
+        h('strong', { text: `AI 修改提案（保存后为第 ${res.rule?.version ?? '?'} 版）` }),
+        res.summary && h('p', { class: 'ai-summary', text: res.summary }),
+        changes.length > 0 &&
+          h(
+            'ul',
+            { class: 'ai-changes' },
+            changes.map((c) => h('li', { text: c })),
+          ),
+      ),
+      errs.length > 0 &&
+        h(
+          'div',
+          { class: 'callout err', role: 'alert' },
+          h('strong', { text: '还不能保存：修改后的规则没有通过校验' }),
+          h(
+            'ul',
+            { class: 'errs' },
+            errs.map((e) => h('li', { text: e })),
+          ),
+          h('p', { text: '可以点「在此基础上继续修改」让 AI 修正这些问题，或者放弃。' }),
+        ),
+      h('h4', { class: 'sub-title muted', text: '前后对比（与当前保存的版本）' }),
+      diffView(d.rule, res.rule),
+      h(
+        'details',
+        { class: 'adv' },
+        h('summary', { text: '查看提案的规则 JSON' }),
+        h('pre', { class: 'json-pre', text: JSON.stringify(res.rule, null, 2) }),
+      ),
+      h(
+        'div',
+        { class: 'toolbar' },
+        save,
+        h('button', {
+          class: 'btn-ghost btn-small',
+          type: 'button',
+          text: '在此基础上继续修改',
+          onclick: () => {
+            setBase(res.rule);
+            out.replaceChildren();
+            input.value = '';
+            input.focus();
+          },
+        }),
+        h('button', {
+          class: 'btn-ghost btn-small',
+          type: 'button',
+          text: '放弃',
+          onclick: () => {
+            setBase(null);
+            out.replaceChildren();
+          },
+        }),
+      ),
+      msg,
+    ];
+    out.replaceChildren(...proposalParts.filter(Boolean));
+  };
+
+  run.addEventListener('click', async () => {
+    const instruction = input.value.trim();
+    if (!instruction) {
+      out.replaceChildren(fail('请先写下要怎么修改。'));
+      input.focus();
+      return;
+    }
+    if (
+      !base &&
+      editor.value !== JSON.stringify(d.rule, null, 2) &&
+      !confirm('编辑器里有未保存的修改，AI 修改基于已保存的版本，继续？')
+    )
+      return;
+    run.disabled = true;
+    out.replaceChildren(spinner('AI 正在生成修改…（可能要几十秒）'));
+    try {
+      const body = { instruction };
+      if (base) body.base = base;
+      const res = await api('POST', `/api/rules/${encodeURIComponent(id)}/ai-edit`, body);
+      setBase(null);
+      showProposal(res);
+    } catch (e) {
+      const list =
+        e instanceof ApiError && (e.status === 422 || e.status === 403) ? errorList(e.body) : [];
+      const text =
+        e instanceof ApiError && e.status === 502 ? 'AI 修改失败，请稍后重试' : aiErrorText(e);
+      out.replaceChildren(fail(list.length ? list.join('\n') : text));
+    } finally {
+      run.disabled = false;
+    }
+  });
+
+  return h(
+    'section',
+    { class: 'ai-edit', 'aria-label': 'AI 修改' },
+    h('h4', { class: 'sub-title muted', text: 'AI 修改' }),
+    h('p', { class: 'hint', text: AI_EDIT_PRIVACY }),
+    baseHint,
+    input,
+    h('div', { class: 'toolbar' }, run),
+    out,
+  );
 }
 
 // ---------- 录制 ----------
@@ -697,17 +980,20 @@ async function fillRecording(box, id, reload) {
     ),
     out,
   );
+  // AI 不可用时 aiBtn 为空，条件项要去掉，否则 replaceChildren 会把它显示成文字
   box.replaceChildren(
-    h(
-      'div',
-      { class: 'detail-head' },
-      h('h3', { class: 'panel-title', text: '录制：' + id }),
-      aiBtn,
-    ),
-    aiBtn && h('p', { class: 'hint', text: AI_PRIVACY }),
-    aiBox,
-    stepsBox,
-    form,
+    ...[
+      h(
+        'div',
+        { class: 'detail-head' },
+        h('h3', { class: 'panel-title', text: '录制：' + id }),
+        aiBtn,
+      ),
+      aiBtn && h('p', { class: 'hint', text: AI_PRIVACY }),
+      aiBox,
+      stepsBox,
+      form,
+    ].filter(Boolean),
   );
   paint();
 }

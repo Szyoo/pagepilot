@@ -44,7 +44,7 @@ pnpm build
 
 配置后，这些站点的访问权限会直接写进扩展，设置页只需用门户账号登录；地址输入收在「高级」里，改了 `.env` 需要重新构建。
 没有配置 `.env` 时，在设置页填写门户地址与后台地址，登录时会向你申请这两个站点的访问权限。
-`VITE_DEFAULT_BRIDGE_URL` 是 claude-bridge 浏览器接口的 base（形如 `https://bridge.example.com/api`），留空则不能使用「请 AI 看看」；也可以在设置页「高级」里填写。bridge 用门户会话 cookie 识别身份，需要先在普通网页里登录门户。
+「请 AI 看看」的 claude-bridge 地址一般不用配置：登录后扩展从后台（`/api/ai/status`）自动获取，第一次使用时申请该站点的访问权限。`VITE_DEFAULT_BRIDGE_URL`（形如 `https://bridge.example.com/api`）是可选的，填了会写进网站权限，省掉这次授权弹窗；设置页「高级」里也可以手动覆盖。bridge 用门户会话 cookie 识别身份，需要先在普通网页里登录门户。
 实时通道（SSE / 轮询 / WebSocket）也在设置页选择，默认 SSE（门户会话 cookie 为 `SameSite=Lax` 时 WebSocket 握手带不上它）。
 
 ## 文档

@@ -14,6 +14,7 @@ import {
   setAutoEnabled,
 } from '../core/rules';
 import { exportVault, importVault, loadVault, profileValueIndex, saveVault } from '../core/vault';
+import { createBackendAiCache, pickBridge } from '../shared/bridge-discovery';
 import type { CaptureResult, ContentEvent, InspectResult } from '../shared/content-api';
 import { EVENT_MESSAGE } from '../shared/content-api';
 import {
@@ -28,7 +29,7 @@ import {
 import { loadSettings, SETTINGS_KEY } from '../shared/settings';
 import { uuid } from '../shared/storage';
 import { POLL_ALARM, Transport, type TransportStatus } from '../transport';
-import { currentUserId, login, logout, requiredOrigins } from '../transport/auth';
+import { currentUserId, fetchWithSession, login, logout, requiredOrigins } from '../transport/auth';
 import { notify } from './notify';
 import { hostPermitted, syncContentScripts } from './permissions';
 import { RecordingSession } from './recording';
@@ -46,6 +47,8 @@ export function startApp(): void {
       void browser.runtime.sendMessage({ type: STATE_CHANGED }).catch(() => undefined);
     }, 100);
   };
+
+  const backendAi = createBackendAiCache({ fetchImpl: fetchWithSession });
 
   const transport = new Transport({
     async apply(msg) {
@@ -149,11 +152,21 @@ export function startApp(): void {
     'state.get': getState,
     async 'auth.login'({ username, password }) {
       await login(username, password);
+      backendAi.clear();
       transport.restart();
       changed();
       return undefined;
     },
     'auth.origins': requiredOrigins,
+    async 'ai.bridge'() {
+      const s = await loadSettings();
+      const backend = await backendAi.get(s.backendUrl, await currentUserId());
+      return pickBridge({
+        settingsUrl: s.bridgeUrl,
+        buildUrl: import.meta.env.VITE_DEFAULT_BRIDGE_URL as string | undefined,
+        backend,
+      });
+    },
     async 'connection.retry'() {
       await requireUser();
       transport.restart();
@@ -162,6 +175,7 @@ export function startApp(): void {
     async 'auth.logout'() {
       const uid = await currentUserId();
       transport.stop();
+      backendAi.clear();
       runner.abortWhere(() => true);
       await logout();
       if (uid) await clearUser(uid);
@@ -340,6 +354,7 @@ export function startApp(): void {
   browser.runtime.onInstalled.addListener(() => void syncContentScripts());
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes[SETTINGS_KEY]) {
+      backendAi.clear();
       void currentUserId().then((uid) => {
         if (uid) transport.restart();
       });
