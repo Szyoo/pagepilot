@@ -74,6 +74,8 @@ const leafStepSchema = z.discriminatedUnion('type', [
     type: z.literal('open'),
     url: template,
     newTab: z.boolean().default(false),
+    /** 已经停在同一页面（网站与路径相同）时默认不再打开；为 true 时总是重新打开 */
+    force: z.boolean().default(false),
   }),
   z.object({ ...baseShape, type: z.literal('click'), target: locatorSchema }),
   z.object({

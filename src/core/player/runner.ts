@@ -630,6 +630,11 @@ export class Runner {
     switch (step.type) {
       case 'open': {
         const url = this.render(ctx, step.url, '');
+        // 已经停在同一页面（网站与路径相同、已加载完）就不再重新打开，直接进入下一步
+        if (!step.newTab && !step.force && (await this.alreadyOn(tabId, url))) {
+          await this.ensureOrFail(tabId);
+          return;
+        }
         const since = Date.now();
         if (step.newTab) {
           const tab = await browser.tabs.create({ url, active: true });
@@ -738,6 +743,13 @@ export class Runner {
         return;
       }
     }
+  }
+
+  /** 标签页是否已停在目标页面：比较网站与路径（忽略查询参数、锚点与末尾斜杠），且已加载完 */
+  private async alreadyOn(tabId: number, target: string): Promise<boolean> {
+    const tab = await browser.tabs.get(tabId).catch(() => undefined);
+    if (!tab?.url || tab.status !== 'complete') return false;
+    return samePage(tab.url, target);
   }
 
   private async ensureOrFail(tabId: number): Promise<void> {
@@ -1111,5 +1123,17 @@ export class Runner {
     delete run.needsConfirm;
     await this.persist(ctx);
     return target;
+  }
+}
+
+/** 两个地址是否是同一页面：网站（协议、主机、端口）与路径相同，忽略查询参数、锚点与路径末尾的斜杠 */
+export function samePage(a: string, b: string): boolean {
+  try {
+    const x = new URL(a);
+    const y = new URL(b);
+    const path = (u: URL) => u.pathname.replace(/\/+$/, '') || '/';
+    return x.origin === y.origin && path(x) === path(y);
+  } catch {
+    return false;
   }
 }

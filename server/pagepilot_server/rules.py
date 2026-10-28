@@ -176,6 +176,7 @@ class _Checker:
         if t == "open":
             f("url", self.string)
             f("newTab", self.boolean, True)
+            f("force", self.boolean, True)
         elif t == "click":
             f("target", self.locator)
         elif t == "fill":
@@ -263,7 +264,7 @@ class _Checker:
 # 每种步骤 Zod 解析后保留的字段（含默认值字段）；占位符只在这些字段里找
 _BASE_KEYS = ("id", "note", "timeoutMs", "retries", "optional", "type")
 _STEP_KEYS: dict[str, tuple[str, ...]] = {
-    "open": ("url", "newTab"),
+    "open": ("url", "newTab", "force"),
     "click": ("target",),
     "fill": ("target", "value", "clear"),
     "select": ("target", "value"),

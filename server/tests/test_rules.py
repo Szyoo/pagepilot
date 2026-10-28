@@ -343,3 +343,10 @@ def test_element_condition_min_length():
     assert validate_rule(rule_with(5)) == []
     for bad in (0, -1, 2.5, "5", True):
         assert validate_rule(rule_with(bad)), bad
+
+
+def test_open_step_accepts_force():
+    rule = simple_rule(steps=[{"id": "s1", "type": "open", "url": "https://example.com/", "force": True}])
+    assert validate_rule(rule) == []
+    rule["steps"][0]["force"] = "yes"
+    assert validate_rule(rule)
