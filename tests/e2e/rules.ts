@@ -117,3 +117,33 @@ export function inputRule(
     ],
   };
 }
+
+/**
+ * 两页流程：第 2 步点一个不存在的 #missing（必然失败并暂停），
+ * 之后点 #next 跳到 step2.html，等待跳转，点 #done 并确认结果
+ */
+export function stuckRule(origin: string): RawRule {
+  return {
+    id: 'e2e-stuck',
+    name: '测试失败暂停',
+    version: 1,
+    match: { urls: [`${origin}/pages/step*`] },
+    steps: [
+      { id: 's1', type: 'click', target: css('#start') },
+      { id: 's2', type: 'click', target: css('#missing'), timeoutMs: 1000, note: '点不存在的按钮' },
+      { id: 's3', type: 'click', target: css('#next') },
+      {
+        id: 's4',
+        type: 'waitFor',
+        until: 'navigation',
+        urlPattern: `${origin}/pages/step2.html*`,
+      },
+      { id: 's5', type: 'click', target: css('#done') },
+      {
+        id: 's6',
+        type: 'assert',
+        condition: { kind: 'element', target: css('#result'), text: '已完成' },
+      },
+    ],
+  };
+}

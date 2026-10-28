@@ -1,4 +1,5 @@
-import type { BgState, RuleView, RunStatus, RunView } from '../../shared/rpc';
+import { stepLabel } from '../../shared/labels';
+import type { BgState, RuleView, RunStatus, RunView, StuckView } from '../../shared/rpc';
 
 export type PanelTab = 'page' | 'runs' | 'recording' | 'rules';
 
@@ -8,23 +9,7 @@ export function isPanelTab(v: unknown): v is PanelTab {
   return typeof v === 'string' && (PANEL_TABS as readonly string[]).includes(v);
 }
 
-const ERROR_TEXT: Record<string, string> = {
-  TARGET_NOT_FOUND: '找不到页面上的元素（页面可能改版了）',
-  TIMEOUT: '等待超时',
-  ASSERT_FAILED: '页面状态和预期不符',
-  NAVIGATION_FAILED: '页面跳转失败',
-  PERMISSION_DENIED: '缺少网站访问权限',
-  DATA_MISSING: '缺少本地数据（去设置页的保险库补充）',
-  SECRET_ORIGIN_DENIED: '这个凭据不允许在当前网站使用',
-  REPEAT_EXHAUSTED: '反复尝试后条件仍未满足',
-  USER_ABORTED: '已被中止',
-  INTERNAL: '内部错误',
-};
-
-/** 错误码转成人话，未知的错误码原样返回 */
-export function describeError(code: string): string {
-  return ERROR_TEXT[code] ?? code;
-}
+export { describeError, stepLabel } from '../../shared/labels';
 
 export type StatusTone = 'gray' | 'yellow' | 'red' | 'green';
 
@@ -133,4 +118,22 @@ export function hostOf(url: string): string {
   } catch {
     return url;
   }
+}
+
+/** 卡住时下拉里的一项：“3. 点击下一步” */
+export function stepOptionLabel(step: StuckView['steps'][number]): string {
+  return `${step.index + 1}. ${stepLabel(step)}`;
+}
+
+/** 失败的那一步：“第 2 步「点击」” */
+export function failedStepText(stuck: StuckView): string {
+  const step = stuck.steps[stuck.failedIndex];
+  return `第 ${stuck.failedIndex + 1} 步「${step ? stepLabel(step) : stuck.failedStepId}」`;
+}
+
+/** 「继续」按钮的文字：从建议的那一步继续；建议的位置越过最后一步时表示这一段已完成 */
+export function resumeLabel(stuck: Pick<StuckView, 'steps' | 'suggestedIndex'>): string {
+  const step = stuck.steps[stuck.suggestedIndex];
+  if (!step) return '这一段已完成，继续后面的步骤';
+  return `从第 ${stuck.suggestedIndex + 1} 步「${stepLabel(step)}」继续`;
 }

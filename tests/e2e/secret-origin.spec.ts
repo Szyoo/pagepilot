@@ -24,20 +24,23 @@ test('凭据只允许 127.0.0.1，在 localhost 页面上运行时拒绝填写',
   const tabId = await ext.tabIdOf(page);
 
   const { runId } = await ext.rpc('run.start', { ruleId: 'e2e-login', tabId });
-  const run = await ext.waitForRun(
-    runId,
-    (r) => r.status !== 'running' && r.status !== 'handoff',
-    '运行结束',
-  );
-  expect(run.status).toBe('failed');
-  expect(run.errorCode).toBe('SECRET_ORIGIN_DENIED');
+  // 填写凭据的那一步失败后暂停交给用户
+  const stuck = await ext.waitForRun(runId, (r) => !!r.stuck, '第 2 步失败后暂停');
+  expect(stuck.status).toBe('handoff');
+  expect(stuck.stuck).toMatchObject({ failedStepId: 's2', errorCode: 'SECRET_ORIGIN_DENIED' });
+  expect(JSON.stringify(stuck)).not.toContain(pass);
 
   await expect(page.locator('#pass')).toHaveValue('');
   expect(page.url()).toContain('/pages/login.html');
   expect(backend.loginSubmissions).toHaveLength(0);
 
+  await ext.rpc('run.abort', { runId });
+  const run = await ext.waitForRun(runId, (r) => r.status === 'aborted', '中止');
+  expect(run.errorCode).toBe('USER_ABORTED');
+  expect(backend.loginSubmissions).toHaveLength(0);
+
   const report = await backend.received.waitFor('runReport', (m) => m.runId === runId);
-  expect(report.status).toBe('failed');
+  expect(report.status).toBe('aborted');
   const steps = report.steps as { stepId: string; status: string; errorCode?: string }[];
   expect(steps.at(-1)).toMatchObject({
     stepId: 's2',

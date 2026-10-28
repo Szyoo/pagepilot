@@ -1,8 +1,24 @@
+import { useState } from 'react';
 import { browser } from 'wxt/browser';
-import { type RuleView, type RunView, rpc } from '../../shared/rpc';
+import {
+  type ResolveAction,
+  type RuleView,
+  type RunView,
+  rpc,
+  type StuckView,
+} from '../../shared/rpc';
 import { useAction } from '../../shared/ui/useAction';
 import { startRule } from './actions';
-import { describeError, formatClock, formatDuration, isActiveRun, RUN_STATUS } from './lib';
+import {
+  describeError,
+  failedStepText,
+  formatClock,
+  formatDuration,
+  isActiveRun,
+  RUN_STATUS,
+  resumeLabel,
+  stepOptionLabel,
+} from './lib';
 import { Badge, Btn, ErrorLine } from './parts';
 
 export function RunCard({
@@ -95,7 +111,23 @@ export function RunCard({
         </p>
       ) : null}
 
-      {handoff ? (
+      {handoff && run.stuck ? (
+        <StuckPanel
+          stuck={run.stuck}
+          busy={busy}
+          resolve={(action, index) =>
+            void act(() =>
+              rpc('run.resolve', {
+                runId: run.runId,
+                action,
+                ...(index !== undefined ? { index } : {}),
+              }),
+            )
+          }
+        />
+      ) : null}
+
+      {handoff && !run.stuck ? (
         <div className="banner">
           {run.message ? <p className="banner-title break">{run.message}</p> : null}
           {run.autoResume ? (
@@ -148,5 +180,63 @@ export function RunCard({
       </div>
       <ErrorLine>{error}</ErrorLine>
     </article>
+  );
+}
+
+/** 步骤失败暂停：说明失败的步骤，并让用户选择从哪一步继续 */
+function StuckPanel({
+  stuck,
+  busy,
+  resolve,
+}: {
+  stuck: StuckView;
+  busy: boolean;
+  resolve: (action: ResolveAction, index?: number) => void;
+}) {
+  // 用户没动过下拉时跟随建议的位置
+  const [picked, setPicked] = useState<number | null>(null);
+  const selected = picked ?? stuck.suggestedIndex;
+  const total = stuck.steps.length;
+  return (
+    <div className="banner stuck">
+      <p className="banner-title break">{failedStepText(stuck)}失败</p>
+      <p className="small break">
+        {stuck.errorText ?? describeError(stuck.errorCode)}
+        <span className="muted">（{stuck.errorCode}）</span>
+      </p>
+      <p className="small">可以在页面上手动处理，再选择从哪一步继续。</p>
+      <Btn kind="primary" disabled={busy} onClick={() => resolve('continue')}>
+        {resumeLabel(stuck)}
+      </Btn>
+      <div className="btn-row">
+        <Btn size="sm" disabled={busy} onClick={() => resolve('retry')}>
+          重试这一步
+        </Btn>
+        <Btn size="sm" disabled={busy} onClick={() => resolve('skip')}>
+          跳过这一步
+        </Btn>
+      </div>
+      <label className="stuck-goto">
+        <span className="small">改从哪一步开始</span>
+        <select
+          className="input"
+          value={selected}
+          onChange={(e) => setPicked(Number(e.target.value))}
+        >
+          {stuck.steps.map((st) => (
+            <option key={st.index} value={st.index}>
+              {stepOptionLabel(st)}
+              {st.index === stuck.suggestedIndex ? '（建议）' : ''}
+            </option>
+          ))}
+          <option value={total}>
+            这一段已完成{total === stuck.suggestedIndex ? '（建议）' : ''}
+          </option>
+        </select>
+      </label>
+      <Btn size="sm" disabled={busy} onClick={() => resolve('goto', selected)}>
+        从这一步继续
+      </Btn>
+    </div>
   );
 }

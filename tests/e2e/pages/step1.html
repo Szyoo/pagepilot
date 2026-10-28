@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>第一步</title>
+  </head>
+  <body>
+    <h1>第一步</h1>
+    <button id="start" type="button">开始</button>
+    <!-- 规则要点的 #missing 不在页面上，测试可以动态插入 -->
+    <button id="next" type="button">下一步</button>
+    <p id="status"></p>
+    <script>
+      window.__clicks = { start: 0, missing: 0, next: 0 };
+      document.getElementById('start').addEventListener('click', () => {
+        window.__clicks.start++;
+        document.getElementById('status').textContent = '已开始';
+      });
+      document.getElementById('next').addEventListener('click', () => {
+        window.__clicks.next++;
+        location.href = '/pages/step2.html';
+      });
+      document.addEventListener('click', (e) => {
+        if (e.target instanceof Element && e.target.id === 'missing') window.__clicks.missing++;
+      });
+    </script>
+  </body>
+</html>

@@ -16,6 +16,7 @@
 Manifest V3 下 service worker 会被随时回收，页面跳转会销毁 content script，因此：
 - **回放状态由 background 持有**，每执行完一步就写入 `chrome.storage.session`，以 `runId` 标识。
 - service worker 重新启动后，从 `storage.session` 读取未完成的运行并继续。
+- 叶子步骤重试用尽仍失败时（`repeat` 循环体与重新登录除外），运行暂停交给用户；background 按失败后标签页是否跳转、当前网址与后续步骤的网址规则判断用户处理到了哪一步，用户确认后从该步继续（也可重试、跳过或任选一步），详见 [rules.md](rules.md) 的「步骤失败时暂停」。
 - content 脚本（`page-agent`）只提供原语：定位、判断条件、执行操作、检测验证组件、抓取、录制监听，不保存流程状态；每一步由 background 下发命令。页面跳转后 background 发现脚本缺失时会主动注入。
 - 跨标签页流程（`open` 新标签、`switchTab`）由 background 跟踪标签页，在目标标签页就绪后继续。
 - iframe 内的目标：background 先在主 frame 解析 `locator.frame`（同源 iframe 直接进入）；链路经过跨域 iframe 时，逐个子 frame 尝试解析。跨域 iframe 内的元素不支持用于条件判断（`assert`、`if`、`repeat`、`waitFor`），只支持操作类步骤；真实输入时按 iframe 的 `src` 换算坐标。
