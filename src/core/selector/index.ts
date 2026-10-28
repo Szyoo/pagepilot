@@ -382,12 +382,41 @@ function sensitiveName(hint: string): boolean {
 }
 const SENSITIVE_AUTOCOMPLETE = /password|cc-|one-time-code/i;
 
+/** 输入框上能说明用途的文字：name、id、aria-label、title、placeholder、关联的 label */
+function fieldHints(el: Element): string {
+  const labels =
+    isInput(el) || isTextarea(el)
+      ? Array.from(el.labels ?? []).map((l) => l.textContent ?? '')
+      : [];
+  return [
+    el.getAttribute('name'),
+    el.id,
+    el.getAttribute('aria-label'),
+    el.getAttribute('title'),
+    el.getAttribute('placeholder'),
+    ...labels,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+const USER_CODE_HINT =
+  /captcha|verif|otp|sms[-_ ]?(code|auth|verif|key)|one[-_ ]?time|auth(entication)?[-_ ]?(code|no|number|key)|security[-_ ]?code|验证码|校验码|認証|인증|보안문자/i;
+
+/** 验证码、短信验证码这类每次都不同、由用户当场输入的字段 */
+export function isUserCodeField(el: Element): boolean {
+  if (!isInput(el) && !isTextarea(el)) return false;
+  // 只看名称与说明文字：有的网站把手机号输入框也标成 autocomplete="one-time-code"
+  return USER_CODE_HINT.test(fieldHints(el));
+}
+
 /** 密码框、支付字段、验证码输入框等：不采集值 */
 export function isSensitive(el: Element): boolean {
   if (isInput(el) && el.type === 'password') return true;
   const ac = el.getAttribute('autocomplete') ?? '';
   if (SENSITIVE_AUTOCOMPLETE.test(ac)) return true;
-  const hint = `${el.getAttribute('name') ?? ''} ${el.id} ${el.getAttribute('aria-label') ?? ''}`;
+  if (isUserCodeField(el)) return true;
+  const hint = fieldHints(el);
   if (isInput(el) || isTextarea(el)) {
     if (sensitiveName(hint)) return true;
   }

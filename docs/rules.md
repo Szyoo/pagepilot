@@ -140,6 +140,7 @@
 - 交还步骤的 `timeoutMs` 默认不限时；用户可随时中止。
 - 交还期间侧边栏总是有「继续」按钮：`resumeWhen` 为 `navigation` / `condition` 时会在条件满足后自动继续，条件迟迟不满足也可以手动继续。用户处理完交还后 30 秒内，不会因页面上仍有验证码而再自动交还一次。
 - 验证码输入：录制时验证码、短信验证码这类输入框（名称含 captcha、verif、otp、sms 等）会直接录成 `handoff`（`resumeWhen: condition`，`until` 是该输入框的 `minLength: <录制时输入的位数>`，录制时没输入则用 `filled: true`）：用户在页面上输完验证码就自动继续。
+- 识别验证码类输入看的是输入框的名称、id、`aria-label`、标题、占位文字和关联的 label，常见字样包括 captcha、verif、otp、sms code、auth code、验证码、認証、인증、보안문자；单独的 “sms”（多半是接短信的手机号）和单独的 `autocomplete="one-time-code"` 标记不算。录了字面值的验证码（如短信验证码）在生成规则时同样改成交还，位数取录制时输入的长度。
 - 回放期间检测到人机验证组件时，会自动插入一次交还（`resumeWhen: condition`，条件为验证组件消失），无需在规则中显式编写。
 
 ### 嵌套限制

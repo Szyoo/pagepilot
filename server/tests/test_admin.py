@@ -143,6 +143,51 @@ def test_captcha_input_becomes_handoff_not_a_secret(client):
     assert rule["requires"] == {"profile": [], "secret": ["password"]}
 
 
+def test_literal_verification_code_becomes_handoff_with_recorded_length(client):
+    """短信验证码这类录成了字面值的输入（名字里没有 captcha，用途写在标题上）：
+    按定位器里可读的名称识别，改成交还，位数取录制时输入的长度。"""
+    code_target = {
+        "strategies": [
+            {"kind": "css", "value": "#crtfKeyNo"},
+            {"kind": "aria", "value": 'textbox[name="Enter verification number"]'},
+        ]
+    }
+    name_target = {
+        "strategies": [
+            {"kind": "css", "value": "#userNm"},
+            {"kind": "aria", "value": 'textbox[name="Enter your name"]'},
+        ]
+    }
+    # 接短信用的手机号：名字含 sms，但不是验证码
+    phone_target = {"strategies": [{"kind": "css", "value": "#smsNo"}, {"kind": "aria", "value": 'textbox[name="휴대폰 번호"]'}]}
+    steps = [
+        {"id": "s1", "type": "open", "url": "https://example.com/login"},
+        {"id": "s2", "type": "fill", "target": name_target, "value": "Hong Gildong"},
+        {"id": "s2b", "type": "fill", "target": phone_target, "value": "01099998888"},
+        {"id": "s3", "type": "fill", "target": code_target, "value": "12345"},
+        {
+            "id": "s4",
+            "type": "fill",
+            "target": {"strategies": [{"kind": "aria", "value": 'textbox[name="인증번호"]'}]},
+            "value": "987654",
+        },
+    ]
+    upload(client, recording("rec-1", steps))
+    rule = client.post("/api/recordings/rec-1/rule", json={"name": "短信验证码"}, headers=USER).json()["rule"]
+    kinds = [s["type"] for s in rule["steps"]]
+    assert kinds == ["open", "fill", "fill", "handoff", "handoff"]
+    # 姓名、手机号是普通输入，原样保留
+    assert rule["steps"][1]["value"] == "Hong Gildong"
+    assert rule["steps"][2]["value"] == "01099998888"
+    assert rule["steps"][3]["until"] == {"kind": "element", "target": code_target, "minLength": 5}
+    assert rule["steps"][4]["until"]["minLength"] == 6
+    # 给了位数时，录了字面值的仍以录制时输入的位数为准
+    r2 = client.post("/api/recordings/rec-1/rule", json={"name": "x", "captchaLength": 4}, headers=USER).json()["rule"]
+    assert r2["steps"][3]["until"]["minLength"] == 5
+    # 字面值不会被保留进规则
+    assert "12345" not in str(rule) and "987654" not in str(rule)
+
+
 def test_captcha_length_param_uses_min_length(client):
     """验证码实际位数与输入框 maxlength 不一致时，可以明确给出位数。"""
     steps = [

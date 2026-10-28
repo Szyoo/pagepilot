@@ -6,7 +6,7 @@ import type { RecordingView } from '../shared/rpc';
 /** 后台聚合录制：把各 frame 上报的原始操作转成规则步骤，并脱敏 */
 
 /** 验证码、短信验证码这类每次都不同的输入：不可能存进保险库，录成交还给用户的步骤 */
-const USER_INPUT_FIELD = /captcha|verif|otp|sms|one[-_]?time|验证码/i;
+const USER_INPUT_FIELD = /captcha|verif|otp|sms[-_ ]?(code|auth|verif|key)|one[-_]?time|验证码/i;
 
 const TYPED = new Set([
   'typed',
@@ -120,7 +120,7 @@ export class RecordingSession {
         this.addStep({ id, type: 'click', target: action.locator });
         break;
       case 'fill': {
-        if (action.sensitive && USER_INPUT_FIELD.test(action.fieldName)) {
+        if (action.userCode || (action.sensitive && USER_INPUT_FIELD.test(action.fieldName))) {
           // 录制时输入了几位就是验证码的真实位数（可能小于输入框的 maxlength）；
           // 没输入时退回“输入框填满”。输完自动继续，侧边栏的「继续」仍可手动继续
           const typed = action.value.length;

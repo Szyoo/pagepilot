@@ -395,3 +395,23 @@ def test_describe_rule_errors(client):
     assert client.post("/api/rules/r1/describe", headers=USER).status_code == 503
     with_fake(client, FakeClient(error=AiTimeout()))
     assert client.post("/api/rules/r1/describe", headers=USER).status_code == 504
+
+
+def test_describe_recording_uses_converted_steps(client):
+    """解读对生成规则时会得到的步骤做：验证码类输入已是交还，且字面值不会发出去。"""
+    fake = with_fake(client)
+    steps = [
+        {"id": "s1", "type": "open", "url": "https://example.com/login"},
+        {
+            "id": "s2",
+            "type": "fill",
+            "target": {"strategies": [{"kind": "aria", "value": 'textbox[name="Enter verification number"]'}]},
+            "value": "12345",
+        },
+    ]
+    upload(client, recording("rec-v", steps))
+    assert client.post("/api/recordings/rec-v/describe", headers=USER).status_code == 200
+    sent = json.loads(fake.calls[0])["steps"]
+    assert [s["type"] for s in sent] == ["open", "handoff"]
+    assert "12345" not in fake.calls[0]
+
