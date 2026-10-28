@@ -58,6 +58,8 @@ export default defineConfig({
       : knownOrigins.length > 0
         ? { host_permissions: [...new Set(knownOrigins)] }
         : {}),
+    // 没有弹窗：点扩展图标直接打开侧边栏（后台启动时设置 openPanelOnActionClick）
+    action: { default_title: 'PagePilot' },
     side_panel: { default_path: 'sidepanel.html' },
   },
 });

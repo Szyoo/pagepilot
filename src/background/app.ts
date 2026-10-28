@@ -339,6 +339,9 @@ export function startApp(): void {
 
   // ---- 启动 ----
 
+  // 点扩展图标直接打开侧边栏（没有弹窗）
+  void browser.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
+
   void (async () => {
     await runner.init();
     await syncContentScripts().catch(() => undefined);
