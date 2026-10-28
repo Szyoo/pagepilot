@@ -25,11 +25,14 @@ export function RunCard({
   run,
   rule,
   now,
+  onAssist,
 }: {
   run: RunView;
   /** 对应的规则（再运行时用）；规则已被移除时为 undefined */
   rule: RuleView | undefined;
   now: number;
+  /** 卡住时打开「请 AI 看看」面板 */
+  onAssist?: ((run: RunView) => void) | undefined;
 }) {
   const { busy, error, run: act } = useAction();
   const active = isActiveRun(run);
@@ -115,6 +118,7 @@ export function RunCard({
         <StuckPanel
           stuck={run.stuck}
           busy={busy}
+          onAssist={onAssist ? () => onAssist(run) : undefined}
           resolve={(action, index) =>
             void act(() =>
               rpc('run.resolve', {
@@ -187,10 +191,12 @@ export function RunCard({
 function StuckPanel({
   stuck,
   busy,
+  onAssist,
   resolve,
 }: {
   stuck: StuckView;
   busy: boolean;
+  onAssist: (() => void) | undefined;
   resolve: (action: ResolveAction, index?: number) => void;
 }) {
   // 用户没动过下拉时跟随建议的位置
@@ -237,6 +243,11 @@ function StuckPanel({
       <Btn size="sm" disabled={busy} onClick={() => resolve('goto', selected)}>
         从这一步继续
       </Btn>
+      {onAssist ? (
+        <Btn size="sm" kind="ghost" onClick={onAssist}>
+          请 AI 看看
+        </Btn>
+      ) : null}
     </div>
   );
 }

@@ -11,10 +11,12 @@ import { Section } from './Section';
 // 构建期默认地址（来自本机 .env）；已配置时界面默认不显示地址输入
 const ENV_BACKEND = (import.meta.env.VITE_DEFAULT_BACKEND_URL as string | undefined) || '';
 const ENV_PORTAL = (import.meta.env.VITE_DEFAULT_PORTAL_URL as string | undefined) || '';
+const ENV_BRIDGE = (import.meta.env.VITE_DEFAULT_BRIDGE_URL as string | undefined) || '';
 
 export function ConnectionSection({ settings, bg }: { settings: Settings; bg: BgState | null }) {
   const [backendUrl, setBackendUrl] = useState(settings.backendUrl ?? '');
   const [portalUrl, setPortalUrl] = useState(settings.portalUrl ?? '');
+  const [bridgeUrl, setBridgeUrl] = useState(settings.bridgeUrl ?? '');
   const [transport, setTransport] = useState(settings.transport);
   const [poll, setPoll] = useState(String(settings.pollIntervalSec));
   const [username, setUsername] = useState('');
@@ -28,13 +30,16 @@ export function ConnectionSection({ settings, bg }: { settings: Settings; bg: Bg
     const patch: Partial<Settings> = { transport, pollIntervalSec: Number(poll) };
     const b = backendUrl.trim();
     const p = portalUrl.trim();
+    const a = bridgeUrl.trim();
     // 与构建期默认地址相同的值不保存，这样重新构建时新的默认地址能生效
     if (b && b !== ENV_BACKEND) patch.backendUrl = b;
     if (p && p !== ENV_PORTAL) patch.portalUrl = p;
+    if (a && a !== ENV_BRIDGE) patch.bridgeUrl = a;
     // 清空或恢复默认时需要移除旧值：saveSettings 会与旧设置合并，因此显式置空
     const next = { ...patch } as Record<string, unknown>;
     if (!b || b === ENV_BACKEND) next.backendUrl = undefined;
     if (!p || p === ENV_PORTAL) next.portalUrl = undefined;
+    if (!a || a === ENV_BRIDGE) next.bridgeUrl = undefined;
     await saveSettings(next as Partial<Settings>);
   };
 
@@ -127,7 +132,9 @@ export function ConnectionSection({ settings, bg }: { settings: Settings; bg: Bg
       <form onSubmit={submit} className="space-y-4">
         <details open={!ENV_BACKEND} className="rounded border border-slate-200 p-3">
           <summary className="cursor-pointer text-sm text-slate-700">
-            {ENV_BACKEND ? '高级：门户与后台地址（已有构建默认值）' : '门户与后台地址'}
+            {ENV_BACKEND
+              ? '高级：门户、后台与 AI 服务地址（已有构建默认值）'
+              : '门户、后台与 AI 服务地址'}
           </summary>
           <div className="mt-3 space-y-4">
             <Field label="门户地址" hint="登录接口所在地址，留空表示与后台地址相同">
@@ -150,6 +157,20 @@ export function ConnectionSection({ settings, bg }: { settings: Settings; bg: Bg
                   className={inputClass}
                   value={backendUrl}
                   onChange={(e) => setBackendUrl(e.target.value)}
+                />
+              )}
+            </Field>
+            <Field
+              label="AI 服务地址"
+              hint="claude-bridge 的浏览器接口，例如 https://bridge.example.com/api；留空则不能使用「请 AI 看看」"
+            >
+              {(id) => (
+                <input
+                  id={id}
+                  type="url"
+                  className={inputClass}
+                  value={bridgeUrl}
+                  onChange={(e) => setBridgeUrl(e.target.value)}
                 />
               )}
             </Field>

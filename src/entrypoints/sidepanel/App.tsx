@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { browser } from 'wxt/browser';
+import type { RunView } from '../../shared/rpc';
 import { useBgState } from '../../shared/ui/useBgState';
+import { AssistPanel } from './AssistPanel';
 import { openUrl } from './actions';
 import { Banners } from './Banners';
 import { Flash, useFlash } from './Flash';
@@ -30,6 +32,8 @@ export function App() {
   const { message, flash } = useFlash();
   const [current, setCurrent] = useState<PanelTab>('page');
   const [submitted, setSubmitted] = useState(false);
+  /** 打开「请 AI 看看」时那一刻的运行（之后运行继续或结束，面板里的对话不受影响） */
+  const [assist, setAssist] = useState<RunView | null>(null);
   const restored = useRef(false);
   const prevStatus = useRef(new Map<string, string>());
 
@@ -124,7 +128,7 @@ export function App() {
             onRecordingStarted={() => selectTab('recording')}
           />
         ) : current === 'runs' ? (
-          <Runs state={state} />
+          <Runs state={state} onAssist={setAssist} />
         ) : current === 'recording' ? (
           <Recording
             recording={state.recording}
@@ -139,6 +143,7 @@ export function App() {
         )}
       </main>
       <Flash message={message} />
+      {assist ? <AssistPanel run={assist} onClose={() => setAssist(null)} /> : null}
     </div>
   );
 }

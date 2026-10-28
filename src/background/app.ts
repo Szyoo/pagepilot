@@ -14,7 +14,7 @@ import {
   setAutoEnabled,
 } from '../core/rules';
 import { exportVault, importVault, loadVault, profileValueIndex, saveVault } from '../core/vault';
-import type { CaptureResult, ContentEvent } from '../shared/content-api';
+import type { CaptureResult, ContentEvent, InspectResult } from '../shared/content-api';
 import { EVENT_MESSAGE } from '../shared/content-api';
 import {
   type BgState,
@@ -242,6 +242,12 @@ export function startApp(): void {
         elements: res.elements,
       });
       return { count: res.elements.length };
+    },
+
+    async 'capture.inspect'({ tabId }) {
+      // 只返回给侧边栏，不经过 transport，也不需要登录
+      await ensureContent(tabId);
+      return command<InspectResult>(tabId, { cmd: 'inspect' });
     },
 
     async 'recording.start'({ tabId }) {

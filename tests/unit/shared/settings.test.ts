@@ -66,6 +66,14 @@ describe('settings', () => {
     expect((await loadSettings()).portalUrl).toBe('https://portal.example.com');
   });
 
+  it('环境变量提供默认 AI 服务（bridge）地址，存储值优先；未配置时为空', async () => {
+    expect((await loadSettings()).bridgeUrl).toBeUndefined();
+    vi.stubEnv('VITE_DEFAULT_BRIDGE_URL', 'https://bridge-env.example.com/api');
+    expect((await loadSettings()).bridgeUrl).toBe('https://bridge-env.example.com/api');
+    await saveSettings({ bridgeUrl: 'https://bridge.example.com/api' });
+    expect((await loadSettings()).bridgeUrl).toBe('https://bridge.example.com/api');
+  });
+
   it('门户地址可单独保存，不影响后台地址', async () => {
     await saveSettings({ backendUrl: 'https://api.example.com' });
     const next = await saveSettings({ portalUrl: 'https://portal.example.com' });
