@@ -103,7 +103,7 @@
 - 经 HTTP 发来的 `hello` 只登记客户端，不再补发（补发由 `stream?since=` 完成）；HTTP 的 `resync` 既推到该用户的 SSE 流，也给轮询置位。
 - `uplink` 响应：成功返回 `{ ok, messages, duplicate? }`，`capture` / `recording` / `runReport` 为 202，其余 200；出错时响应体就是一条 `error` 消息：格式错误 400（`INVALID_MESSAGE`）、超大 413（`PAYLOAD_TOO_LARGE`）。扩展对这类 4xx（除 401、403、408、429）会丢弃该条消息，不再重发。
 - WebSocket：`SZYYW_SSO` 未开时以关闭码 1013 关闭；单条消息超过 2 MB 回 `error`，不断开。
-- 数据库另有 `clients`、`uplink_seen`（上行去重，随保留期清理）两张表，`users` 多了 `acked_seq`、`resync_pending` 两列。
+- 数据库另有 `clients`、`uplink_seen`（上行去重，随保留期清理）、`ai_notes`（AI 解读缓存，见下文）三张表，`users` 多了 `acked_seq`、`resync_pending` 两列。
 - 管理页的静态文件挂在根路径（如 `/app.js`），同样需要身份头。
 
 ## 管理接口（需要身份头，JSON）
@@ -126,6 +126,36 @@
 列表接口支持 `?limit=`（默认 100，最大 500）。找不到或无权访问一律 404。
 
 管理页 `GET /` 是一个静态页面（同样需要身份头），通过上面的接口查看规则、录制、抓取与运行报告，编辑规则 JSON，把录制生成规则。
+
+## AI 解读
+
+把录制或规则交给 Claude（经用户自己的 claude-bridge 服务），生成整体说明和每一步的中文描述（如“点击登录按钮”“输入验证码（交还给你）”），让规则不再是一串定位器。描述写进步骤的 `note`，扩展运行时显示在侧边栏。
+
+**配置**：`CLAUDE_BRIDGE_URL` 与 `CLAUDE_BRIDGE_TOKEN` 都设置才可用，否则相关接口返回 503、管理页不显示 AI 按钮。后台通过 claude-bridge 的调用方接口提交一次性任务（`POST {CLAUDE_BRIDGE_URL}/api/caller/tasks`，带 `Authorization: Bearer <令牌>`），再长轮询 `GET /api/caller/tasks/{id}?wait=N` 取结果；整体超时 `AI_TIMEOUT_SEC` 秒（同时作为 bridge 侧任务的超时，到点自动取消）。bridge 侧需要：用 `claude-bridge callers add <名称> --user <账户> --scope <scope>` 建调用方令牌；多用户模式下把该 scope 加进 `CLAUDE_BRIDGE_SCOPES`；worker 的 `CLAUDE_BRIDGE_PROFILES` 给该 scope 一个没有任何工具的 profile。
+
+**脱敏**（发送前一律处理，日志也不记录发送内容与回答）：
+- 只发送步骤的 `id`、`type` 和下面这些字段，`note`、超时等其他字段都不发；
+- 定位器只取可读的部分：`aria` 的角色与名称、`text` 的文字、`testid`、`css` 里的 `#id` 与 `[name="…"]`；不发 `xpath` 与长 css 路径；
+- `open.url`、`waitFor` / `switchTab` 的 `urlPattern`、`url` 条件的 `pattern` 只保留网站与路径（去掉账号、查询串与 `#`）；
+- `fill.value`：占位符（`{{profile.x}}`、`{{secret.x}}`、`{{var.x}}`）原样保留，其他字面值替换为 `<用户输入，N 个字符>`；
+- `select.value`（页面上的选项值）、`check.checked`、`press.key`、`handoff.message`、`extract.saveAs` 保留；
+- `if` / `repeat` 的条件按上面的规则处理，`then` / `else` / `steps` 递归处理。
+
+**接口**（权限与其他管理接口一致：只能操作自己的，管理员可操作全部，否则 404）：
+
+| 接口                                 | 说明                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/ai/status`                 | `{ available, model }`：AI 是否可用、使用的模型（不可用时 `model` 为 `null`）                                                                                                                                                                                                                               |
+| `POST /api/recordings/{id}/describe` | 生成录制的解读：`{ summary, steps: [{ id, text }], model, createdAt, cached }`；有缓存时直接返回（`cached: true`），`?refresh=1` 强制重新生成；录制没有步骤返回 422                                                                                                                                         |
+| `GET /api/recordings/{id}`           | 已有解读缓存时，详情多一个 `ai` 字段（同上，不含 `cached`）                                                                                                                                                                                                                                                 |
+| `POST /api/recordings/{id}/rule`     | 已有解读缓存时，把每步的描述写进生成规则对应步骤的 `note`（录制里已有的 note 不覆盖）；没有缓存不调用 AI                                                                                                                                                                                                    |
+| `POST /api/rules/{id}/describe`      | 对当前规则（含 `login.steps` 与嵌套步骤）生成描述，只填空的 `note`，`version + 1` 保存为新版本并推送给扩展；返回 `{ rule, summary, added, model, cached }`（`added` 是写入的条数；为 0 时不产生新版本）。共享规则只有管理员能做（所有者是普通用户时 403）；AI 调用期间规则被改过返回 409；`?refresh=1` 同上 |
+
+`steps` 按步骤顺序每个 id 一条；模型没给出或给错的步骤用按类型生成的泛化描述补齐（如“点击按钮”“填写输入框”“交还给你处理”），这些兜底描述不会写进 `note`。描述最长 40 字。
+
+**错误码**：AI 未配置 503 `{ "detail": "AI 未配置" }`；超时 504 `{ "detail": "AI 响应超时" }`；连不上 bridge、bridge 返回错误（worker 不在线、并发已满、配额不足、令牌无效等）或回答无法解析 502 `{ "detail": "AI 解读失败" }`。
+
+**缓存**：表 `ai_notes(kind, ref, owner_sub, digest, body, model, created_at)`，主键 `(kind, ref)`，`kind` 为 `recording` / `rule`。`digest` 是脱敏后输入的 SHA-256，输入变了（例如规则步骤改了）缓存自动失效；note 不参与摘要，所以填完 note 再解读会命中缓存。录制被删除或过了保留期、规则被删除时，对应的缓存一并删除。
 
 ## 规则校验
 

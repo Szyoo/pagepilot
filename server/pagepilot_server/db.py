@@ -108,6 +108,19 @@ MIGRATIONS: tuple[str, ...] = (
     ) WITHOUT ROWID;
     CREATE INDEX uplink_seen_received ON uplink_seen(received_at);
     """,
+    # AI 解读缓存：kind = recording / rule，ref = 录制 id / 规则 id；digest 是脱敏后输入的 SHA-256
+    """
+    CREATE TABLE ai_notes (
+        kind       TEXT NOT NULL,
+        ref        TEXT NOT NULL,
+        owner_sub  TEXT NOT NULL,
+        digest     TEXT NOT NULL,
+        body       TEXT NOT NULL,                   -- {summary, steps: [{id, text}], aiIds}
+        model      TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (kind, ref)
+    );
+    """,
 )
 
 

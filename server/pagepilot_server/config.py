@@ -34,6 +34,12 @@ class Config:
     max_body: int = 2 * 1024 * 1024
     events_keep: int = 1000
     purge_interval: float = 86400.0
+    # AI 解读（claude-bridge 调用方接口）；地址或令牌为空即不可用
+    bridge_url: str = ""
+    bridge_token: str = ""
+    bridge_model: str = "claude-haiku-5-5"
+    bridge_scope: str = "pagepilot"
+    ai_timeout: float = 120.0
 
     @classmethod
     def from_env(cls) -> Config:
@@ -48,7 +54,16 @@ class Config:
             retention_days=_int("RETENTION_DAYS", 90),
             allowed_origins=origins,
             port=_int("PORT", 8000),
+            bridge_url=os.environ.get("CLAUDE_BRIDGE_URL", "").strip().rstrip("/"),
+            bridge_token=os.environ.get("CLAUDE_BRIDGE_TOKEN", "").strip(),
+            bridge_model=os.environ.get("CLAUDE_BRIDGE_MODEL", "").strip() or "claude-haiku-5-5",
+            bridge_scope=os.environ.get("CLAUDE_BRIDGE_SCOPE", "").strip() or "pagepilot",
+            ai_timeout=float(_int("AI_TIMEOUT_SEC", 120, minimum=5)),
         )
+
+    @property
+    def ai_configured(self) -> bool:
+        return bool(self.bridge_url and self.bridge_token)
 
     @property
     def db_path(self) -> Path:

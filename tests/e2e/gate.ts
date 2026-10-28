@@ -17,6 +17,9 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
+/** 测试用的门户地址（不存在，管理页对它的请求由用例拦截） */
+export const FAKE_PORTAL = 'https://portal.example.com';
+
 /**
  * 假门卫：模拟生产环境里反向代理的 sso 片段与门户登录，前面挡着真实后台（server/，FastAPI）。
  *
@@ -139,7 +142,14 @@ class BackendProcess {
       ],
       {
         cwd: SERVER_DIR,
-        env: { ...process.env, SZYYW_SSO: '1', DATA_DIR: dataDir, PYTHONUNBUFFERED: '1' },
+        env: {
+          ...process.env,
+          SZYYW_SSO: '1',
+          DATA_DIR: dataDir,
+          PYTHONUNBUFFERED: '1',
+          // 管理页的设计包会向门户读账户信息；测试里指向一个假地址，由用例拦截
+          PORTAL_URL: FAKE_PORTAL,
+        },
         stdio: ['ignore', 'pipe', 'pipe'],
       },
     );

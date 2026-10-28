@@ -1,6 +1,13 @@
 // PagePilot 管理页：纯原生 JS。所有接口文本一律经 textContent 插入，不拼接 innerHTML。
 
-const state = { me: null, tab: 'rules', limit: {}, sel: {}, busy: 0 };
+const state = {
+  me: null,
+  tab: 'rules',
+  limit: {},
+  sel: {},
+  busy: 0,
+  ai: { available: false, model: null },
+};
 const $ = (id) => document.getElementById(id);
 const main = $('main');
 
@@ -18,6 +25,12 @@ function h(tag, attrs, ...kids) {
     if (kid == null || kid === false) continue;
     el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   }
+  // 表单控件统一用设计包的 .field / .switch
+  if (tag === 'textarea' || tag === 'select') el.classList.add('field');
+  else if (tag === 'input') {
+    if (el.type === 'checkbox') el.classList.add('switch');
+    else el.classList.add('field');
+  }
   return el;
 }
 const pick = (o, ...keys) => {
@@ -29,7 +42,7 @@ const isAdmin = () => state.me && state.me.role === 'admin';
 function fmtTime(v) {
   if (v == null || v === '') return '';
   const d = new Date(typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v);
-  return isNaN(d) ? String(v) : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString();
 }
 const fmtMs = (v) => (v == null ? '' : v >= 1000 ? (v / 1000).toFixed(1) + ' 秒' : v + ' 毫秒');
 
@@ -102,7 +115,7 @@ async function api(method, path, body) {
     return data;
   } catch (e) {
     if (e instanceof ApiError) throw e;
-    throw new Error('网络错误：' + (e && e.message ? e.message : e));
+    throw new Error('网络错误：' + (e?.message ? e.message : e));
   } finally {
     setBusy(-1);
   }
@@ -115,6 +128,49 @@ async function guard(fn) {
   } catch (e) {
     showError(e.message);
   }
+}
+
+// AI 接口的错误文案；404 视为接口不存在
+function aiErrorText(e) {
+  if (e instanceof ApiError) {
+    if (e.status === 503) return 'AI 未配置';
+    if (e.status === 504) return 'AI 响应超时';
+    if (e.status === 502) return 'AI 解读失败';
+  }
+  return e.message || 'AI 请求失败';
+}
+const checkLabel = (input, text) =>
+  h('label', { class: 'field-row check-row' }, input, h('span', { text }));
+const spinner = (text) =>
+  h(
+    'span',
+    { class: 'ai-wait muted', role: 'status' },
+    h('span', { class: 'spinner' }),
+    ' ' + text,
+  );
+const AI_PRIVACY = '发送前会抹掉你输入的值，只发步骤类型、按钮文字和页面地址。';
+
+// 步骤的可读视图：大字说明 + 小字类型/目标
+function stepList(steps, noteOf) {
+  return h(
+    'ol',
+    { class: 'step-list' },
+    steps.map((s, i) => {
+      const note = noteOf(s);
+      const brief = withPlaceholders(`${s.type || '?'}  ${stepBrief(s)}`.trim());
+      return h(
+        'li',
+        { class: 'step-item' },
+        h('span', { class: 'step-no num', text: String(i + 1) }),
+        h(
+          'div',
+          { class: 'step-body' },
+          note && h('div', { class: 'step-note', text: note }),
+          h('div', { class: note ? 'step-sub small muted' : 'step-note' }, brief),
+        ),
+      );
+    }),
+  );
 }
 
 // 返回数组：兼容 [..] 与 {items:[..]}
@@ -152,8 +208,8 @@ function dataTable(columns, rows, onSelect, selectedKey, keyOf) {
     body.push(h('tr', {}, h('td', { colspan: columns.length, class: 'muted', text: '暂无数据' })));
   return h(
     'div',
-    { class: 'table-wrap' },
-    h('table', {}, h('thead', {}, head), h('tbody', {}, body)),
+    { class: 'table-wrap glass' },
+    h('table', { class: 'tbl' }, h('thead', {}, head), h('tbody', {}, body)),
   );
 }
 
@@ -161,7 +217,7 @@ function moreButton(tab, count, reload) {
   const limit = state.limit[tab] || 100;
   if (count < limit || limit >= 500) return null;
   return h('button', {
-    class: 'btn more',
+    class: 'btn-ghost btn-small more',
     type: 'button',
     text: '加载更多',
     onclick: () => {
@@ -174,7 +230,7 @@ const limitQs = (tab) => 'limit=' + (state.limit[tab] || 100);
 
 function deleteButton(label, confirmMsg, fn) {
   return h('button', {
-    class: 'btn danger',
+    class: 'btn-ghost btn-small danger',
     type: 'button',
     text: label,
     onclick: async () => {
@@ -204,7 +260,7 @@ async function renderRules() {
   const sel = state.sel.rules;
   const editor = h(
     'div',
-    { class: 'panel' },
+    { class: 'glass panel panel-detail' },
     h('p', { class: 'muted', text: '选择左侧规则，或点击“新建规则”。' }),
   );
   const reload = () => show('rules');
@@ -213,7 +269,7 @@ async function renderRules() {
     'div',
     { class: 'toolbar' },
     h('button', {
-      class: 'btn primary',
+      class: 'btn btn-small',
       type: 'button',
       text: '新建规则',
       onclick: () => {
@@ -223,9 +279,7 @@ async function renderRules() {
       },
     }),
     isAdmin() &&
-      h(
-        'label',
-        {},
+      checkLabel(
         h('input', {
           type: 'checkbox',
           checked: all ? true : null,
@@ -234,9 +288,9 @@ async function renderRules() {
             reload();
           },
         }),
-        ' 显示全部用户的规则',
+        '显示全部用户的规则',
       ),
-    h('button', { class: 'btn', type: 'button', text: '刷新', onclick: reload }),
+    h('button', { class: 'btn-ghost btn-small', type: 'button', text: '刷新', onclick: reload }),
   );
 
   const cols = [
@@ -262,7 +316,7 @@ async function renderRules() {
   );
 
   const d = state.draft;
-  if (d) editor.replaceChildren(...ruleEditor(d, reload));
+  if (d) editor.replaceChildren(...ruleEditor(d, reload).filter(Boolean));
   const left = h('div', {}, table, moreButton('rules', items.length, reload));
   main.replaceChildren(toolbar, h('div', { class: 'split wide' }, left, editor));
 }
@@ -272,20 +326,75 @@ function ruleEditor(d, reload) {
   ta.value = JSON.stringify(d.rule, null, 2);
   const shared =
     isAdmin() &&
-    h(
-      'label',
-      {},
-      h('input', { type: 'checkbox', checked: d.shared ? true : null }),
-      ' 共享给所有用户',
-    );
+    checkLabel(h('input', { type: 'checkbox', checked: d.shared ? true : null }), '共享给所有用户');
   const out = h('div', { 'aria-live': 'polite' });
-  const retry = h('button', { class: 'btn', type: 'button', text: '版本 +1 后重试', hidden: true });
+  const aiOut = h('div', { class: 'ai-out', 'aria-live': 'polite' });
+  // 步骤可读视图：跟着编辑器里的 JSON 实时更新（JSON 暂时写坏时保持上一次的内容）
+  const steps = h('div', { class: 'steps-view' });
+  const paintSteps = () => {
+    try {
+      const rule = JSON.parse(ta.value);
+      if (Array.isArray(rule?.steps) && rule.steps.length)
+        steps.replaceChildren(stepList(rule.steps, (s) => s.note));
+      else steps.replaceChildren(h('p', { class: 'muted', text: '还没有步骤' }));
+    } catch {
+      /* 保持上一次 */
+    }
+  };
+  ta.addEventListener('input', paintSteps);
+  paintSteps();
+  if (state.ruleNote && state.ruleNote.id === d.rule.id) {
+    aiOut.replaceChildren(
+      h(
+        'div',
+        { class: 'callout ok' },
+        h('strong', { text: '已保存为新版本并下发到扩展' }),
+        h('p', { class: 'ai-summary', text: state.ruleNote.summary || '' }),
+      ),
+    );
+    state.ruleNote = null;
+  }
+  const describe =
+    state.ai.available &&
+    !d.isNew &&
+    h('button', {
+      class: 'btn-ghost btn-small',
+      type: 'button',
+      text: 'AI 补充说明',
+      onclick: async (ev) => {
+        const btn = ev.currentTarget;
+        if (
+          ta.value !== JSON.stringify(d.rule, null, 2) &&
+          !confirm('编辑器里有未保存的修改，AI 补充说明基于已保存的版本，继续？')
+        )
+          return;
+        btn.disabled = true;
+        aiOut.replaceChildren(spinner('AI 正在补充说明…'));
+        try {
+          const res = await api('POST', `/api/rules/${encodeURIComponent(d.rule.id)}/describe`, {});
+          state.draft = { rule: res.rule, shared: d.shared, isNew: false };
+          state.ruleNote = { id: d.rule.id, summary: res.summary };
+          await reload();
+        } catch (e) {
+          btn.disabled = false;
+          aiOut.replaceChildren(
+            h('div', { class: 'callout err', role: 'alert', text: aiErrorText(e) }),
+          );
+        }
+      },
+    });
+  const retry = h('button', {
+    class: 'btn-ghost btn-small',
+    type: 'button',
+    text: '版本 +1 后重试',
+    hidden: true,
+  });
 
   const parse = () => {
     try {
       return JSON.parse(ta.value);
     } catch (e) {
-      out.replaceChildren(h('p', { class: 'errs', text: 'JSON 格式错误：' + e.message }));
+      out.replaceChildren(h('p', { class: 'errs err-text', text: 'JSON 格式错误：' + e.message }));
       return null;
     }
   };
@@ -293,7 +402,7 @@ function ruleEditor(d, reload) {
     out.replaceChildren(
       h(
         'ul',
-        { class: 'errs' },
+        { class: 'errs err-text' },
         errs.map((e) => h('li', { text: e })),
       ),
     );
@@ -304,7 +413,7 @@ function ruleEditor(d, reload) {
     const res = await guard(() => api('POST', '/api/rules/validate', { rule }));
     if (!res) return false;
     if (res.ok) {
-      out.replaceChildren(h('p', { class: 'okmsg', text: '校验通过' }));
+      out.replaceChildren(h('p', { class: 'okmsg ok-text', text: '校验通过' }));
       return true;
     }
     showErrs(res.errors?.length ? res.errors : ['校验未通过']);
@@ -343,9 +452,10 @@ function ruleEditor(d, reload) {
   const buttons = h(
     'div',
     { class: 'toolbar' },
-    h('button', { class: 'btn', type: 'button', text: '校验', onclick: validate }),
-    h('button', { class: 'btn primary', type: 'button', text: '保存', onclick: save }),
+    h('button', { class: 'btn-ghost btn-small', type: 'button', text: '校验', onclick: validate }),
+    h('button', { class: 'btn btn-small', type: 'button', text: '保存', onclick: save }),
     retry,
+    describe,
     !d.isNew &&
       deleteButton('删除', `确认删除规则 ${d.rule.id}？`, async () => {
         const ok = await guard(() =>
@@ -358,7 +468,18 @@ function ruleEditor(d, reload) {
         }
       }),
   );
-  return [h('h2', { text: d.isNew ? '新建规则' : '规则：' + d.rule.id }), ta, shared, buttons, out];
+  return [
+    h('h3', { class: 'panel-title', text: d.isNew ? '新建规则' : '规则：' + d.rule.id }),
+    h('h4', { class: 'sub-title muted', text: '步骤' }),
+    steps,
+    describe && h('p', { class: 'hint', text: AI_PRIVACY }),
+    aiOut,
+    h('h4', { class: 'sub-title muted', text: '规则 JSON' }),
+    ta,
+    shared,
+    buttons,
+    out,
+  ];
 }
 
 // ---------- 录制 ----------
@@ -396,14 +517,14 @@ async function renderRecordings() {
   const sel = state.sel.recordings;
   const detail = h(
     'div',
-    { class: 'panel' },
+    { class: 'glass panel panel-detail' },
     h('p', { class: 'muted', text: '选择左侧录制查看步骤。' }),
   );
   main.replaceChildren(
     h(
       'div',
       { class: 'toolbar' },
-      h('button', { class: 'btn', type: 'button', text: '刷新', onclick: reload }),
+      h('button', { class: 'btn-ghost btn-small', type: 'button', text: '刷新', onclick: reload }),
     ),
     h(
       'div',
@@ -434,13 +555,48 @@ async function fillRecording(box, id, reload) {
   if (!raw) return;
   const rec = unwrap(raw);
   const steps = Array.isArray(rec.steps) ? rec.steps : [];
-  const list = h(
-    'ol',
-    {},
-    steps.map((s) =>
-      h('li', {}, h('strong', { text: s.type || '?' }), ' ', withPlaceholders(stepBrief(s))),
-    ),
-  );
+  let ai = rec.ai && typeof rec.ai === 'object' ? rec.ai : null;
+  const stepsBox = h('div', { class: 'steps-view' });
+  const aiBox = h('div', { class: 'ai-out', 'aria-live': 'polite' });
+  const aiBtn = state.ai.available
+    ? h('button', { class: 'btn-ghost btn-small', type: 'button', onclick: () => runAi() })
+    : null;
+  const paint = () => {
+    const notes = new Map((ai?.steps || []).map((x) => [x.id, x.text]));
+    stepsBox.replaceChildren(
+      steps.length
+        ? stepList(steps, (s) => notes.get(s.id))
+        : h('p', { class: 'muted', text: '没有步骤' }),
+    );
+    if (aiBtn) aiBtn.textContent = ai ? '重新解读' : 'AI 解读';
+    if (!ai) return aiBox.replaceChildren();
+    const meta = [ai.model, ai.createdAt && fmtTime(ai.createdAt), ai.cached ? '缓存' : '']
+      .filter(Boolean)
+      .join(' · ');
+    aiBox.replaceChildren(
+      h(
+        'div',
+        { class: 'callout info' },
+        h('strong', { text: 'AI 解读' }),
+        h('p', { class: 'ai-summary', text: ai.summary || '' }),
+        meta && h('div', { class: 'tiny muted', text: meta }),
+      ),
+    );
+  };
+  const runAi = async () => {
+    aiBtn.disabled = true;
+    aiBox.replaceChildren(spinner('AI 解读中…'));
+    try {
+      const qs = ai ? '?refresh=1' : '';
+      ai = await api('POST', `/api/recordings/${encodeURIComponent(id)}/describe${qs}`, {});
+      paint();
+    } catch (e) {
+      paint();
+      aiBox.append(h('div', { class: 'callout err', role: 'alert', text: aiErrorText(e) }));
+    } finally {
+      aiBtn.disabled = false;
+    }
+  };
   const inp = (name, val) => h('input', { type: 'text', name, value: val ?? '' });
   const ta = (name) => h('textarea', { name, rows: '3', spellcheck: 'false' });
   const idIn = inp('id', ''),
@@ -463,14 +619,14 @@ async function fillRecording(box, id, reload) {
     { name: 'inputMode' },
     ['auto', 'trusted', 'synthetic'].map((v) => h('option', { value: v, text: v })),
   );
-  const sharedCb = isAdmin() && h('label', {}, h('input', { type: 'checkbox' }), ' 共享给所有用户');
+  const sharedCb = isAdmin() && checkLabel(h('input', { type: 'checkbox' }), '共享给所有用户');
   const out = h('div', { 'aria-live': 'polite' });
   const lines = (el) =>
     el.value
       .split('\n')
       .map((s) => s.trim())
       .filter(Boolean);
-  const field = (label, el) => h('label', {}, h('span', { text: label }), el);
+  const field = (label, el) => h('label', { class: 'form-row' }, h('span', { text: label }), el);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -492,7 +648,7 @@ async function fillRecording(box, id, reload) {
     try {
       const res = await api('POST', `/api/recordings/${encodeURIComponent(id)}/rule`, body);
       const created = res && (res.rule || res);
-      state.sel.rules = created && created.id ? created.id : body.id;
+      state.sel.rules = created?.id ? created.id : body.id;
       state.draft = null;
       await show('rules');
     } catch (err) {
@@ -502,7 +658,7 @@ async function fillRecording(box, id, reload) {
         out.replaceChildren(
           h(
             'ul',
-            { class: 'errs' },
+            { class: 'errs err-text' },
             errs.map((x) => h('li', { text: x })),
           ),
         );
@@ -510,8 +666,8 @@ async function fillRecording(box, id, reload) {
   };
   const form = h(
     'form',
-    { class: 'form-grid', onsubmit: submit },
-    h('h2', { text: '生成规则' }),
+    { class: 'gen-form', onsubmit: submit },
+    h('h3', { class: 'panel-title', text: '生成规则' }),
     field('名称', nameIn),
     h(
       'details',
@@ -528,7 +684,7 @@ async function fillRecording(box, id, reload) {
     h(
       'div',
       { class: 'toolbar' },
-      h('button', { class: 'btn primary', type: 'submit', text: '生成规则' }),
+      h('button', { class: 'btn btn-small', type: 'submit', text: '生成规则' }),
       deleteButton('删除录制', '确认删除该录制？', async () => {
         const ok = await guard(() =>
           api('DELETE', '/api/recordings/' + encodeURIComponent(id)).then(() => true),
@@ -542,10 +698,18 @@ async function fillRecording(box, id, reload) {
     out,
   );
   box.replaceChildren(
-    h('h2', { text: '录制：' + id }),
-    steps.length ? list : h('p', { class: 'muted', text: '没有步骤' }),
+    h(
+      'div',
+      { class: 'detail-head' },
+      h('h3', { class: 'panel-title', text: '录制：' + id }),
+      aiBtn,
+    ),
+    aiBtn && h('p', { class: 'hint', text: AI_PRIVACY }),
+    aiBox,
+    stepsBox,
     form,
   );
+  paint();
 }
 
 // ---------- 抓取 ----------
@@ -570,14 +734,14 @@ async function renderCaptures() {
   const sel = state.sel.captures;
   const detail = h(
     'div',
-    { class: 'panel' },
+    { class: 'glass panel panel-detail' },
     h('p', { class: 'muted', text: '选择左侧抓取查看元素。' }),
   );
   main.replaceChildren(
     h(
       'div',
       { class: 'toolbar' },
-      h('button', { class: 'btn', type: 'button', text: '刷新', onclick: reload }),
+      h('button', { class: 'btn-ghost btn-small', type: 'button', text: '刷新', onclick: reload }),
     ),
     h(
       'div',
@@ -626,7 +790,7 @@ async function renderCaptures() {
     { title: '敏感', render: (e) => (e.sensitive ? '是' : '否') },
   ];
   detail.replaceChildren(
-    h('h2', { text: pick(cap, 'pageUrl', 'url') || '抓取详情' }),
+    h('h3', { class: 'panel-title', text: pick(cap, 'pageUrl', 'url') || '抓取详情' }),
     dataTable(ecols, els, null, null, () => ''),
     h(
       'div',
@@ -655,7 +819,11 @@ async function renderRuns() {
   const idOf = (r) => pick(r, 'runId', 'id');
   const dur = (r) =>
     r.endedAt != null && r.startedAt != null ? fmtMs(r.endedAt - r.startedAt) : fmtMs(r.durationMs);
-  const stat = (s) => h('span', { class: 'status-' + s, text: s });
+  const stat = (s) =>
+    h('span', {
+      class: 'pill ' + (s === 'succeeded' ? 'green' : s === 'failed' ? 'red' : 'slate'),
+      text: s,
+    });
   const cols = [
     { title: '规则 ID', render: (r) => r.ruleId },
     { title: '版本', render: (r) => pick(r, 'ruleVersion', 'version') },
@@ -682,7 +850,7 @@ async function renderRuns() {
   const sel = state.sel.runs;
   const detail = h(
     'div',
-    { class: 'panel' },
+    { class: 'glass panel panel-detail' },
     h('p', { class: 'muted', text: '选择左侧报告查看逐步结果。' }),
   );
   main.replaceChildren(
@@ -690,8 +858,8 @@ async function renderRuns() {
       'div',
       { class: 'toolbar' },
       h('div', { class: 'grow' }, filter),
-      h('button', { class: 'btn', type: 'button', text: '过滤', onclick: apply }),
-      h('button', { class: 'btn', type: 'button', text: '刷新', onclick: reload }),
+      h('button', { class: 'btn-ghost btn-small', type: 'button', text: '过滤', onclick: apply }),
+      h('button', { class: 'btn-ghost btn-small', type: 'button', text: '刷新', onclick: reload }),
     ),
     h(
       'div',
@@ -726,7 +894,7 @@ async function renderRuns() {
     { title: '错误码', render: (s) => s.errorCode },
   ];
   detail.replaceChildren(
-    h('h2', { text: `运行：${run.ruleId ?? ''} ${sel}` }),
+    h('h3', { class: 'panel-title', text: `运行：${run.ruleId ?? ''} ${sel}` }),
     dataTable(scols, Array.isArray(run.steps) ? run.steps : [], null, null, () => ''),
   );
 }
@@ -761,6 +929,13 @@ async function init() {
       show(b.dataset.tab);
     });
   });
+  // AI 状态：接口不存在或失败一律视为不可用（不显示 AI 按钮）
+  try {
+    const st = await api('GET', '/api/ai/status');
+    state.ai = { available: !!st?.available, model: st?.model ?? null };
+  } catch {
+    state.ai = { available: false, model: null };
+  }
   const me = await guard(() => api('GET', '/api/me'));
   if (me) {
     state.me = me;

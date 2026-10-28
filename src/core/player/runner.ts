@@ -51,6 +51,8 @@ export interface PersistedRun {
   startedAt: number;
   endedAt?: number;
   stepId?: string;
+  /** 当前步骤的说明（取自步骤的 note），侧边栏优先显示 */
+  stepNote?: string;
   message?: string;
   repeat?: { attempt: number; max: number };
   needsConfirm?: boolean;
@@ -144,6 +146,7 @@ export class Runner {
         startedAt: r.startedAt,
         ...(r.endedAt ? { endedAt: r.endedAt } : {}),
         ...(r.stepId ? { stepId: r.stepId } : {}),
+        ...(r.stepNote ? { stepNote: r.stepNote } : {}),
         ...(r.message ? { message: r.message } : {}),
         ...(r.repeat ? { repeat: r.repeat } : {}),
         ...(r.needsConfirm !== undefined ? { needsConfirm: r.needsConfirm } : {}),
@@ -405,6 +408,9 @@ export class Runner {
   ): Promise<'ok' | 'final'> {
     this.checkAbort(ctx);
     ctx.run.stepId = step.id;
+    const note = step.note?.trim();
+    if (note) ctx.run.stepNote = note;
+    else delete ctx.run.stepNote;
     delete ctx.run.repeat;
 
     if (step.type === 'if') {

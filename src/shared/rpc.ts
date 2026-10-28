@@ -31,6 +31,8 @@ export interface RunView {
   endedAt?: number;
   /** 当前步骤 id */
   stepId?: string;
+  /** 当前步骤的说明（步骤的 note，例如 AI 解读写入的描述） */
+  stepNote?: string;
   /** 交还时显示给用户的提示 */
   message?: string;
   /** repeat 进度 */
