@@ -21,6 +21,22 @@ export interface RuleView {
 
 export type RunStatus = 'running' | 'handoff' | 'succeeded' | 'failed' | 'aborted' | 'handedOff';
 
+/** 步骤失败后暂停等用户处理时的信息 */
+export interface StuckView {
+  failedStepId: string;
+  /** 失败步骤在所在那一层步骤列表里的索引 */
+  failedIndex: number;
+  errorCode: string;
+  errorText?: string;
+  /** 建议从哪一步继续；等于 steps.length 表示这一层已完成 */
+  suggestedIndex: number;
+  /** 失败步骤所在那一层的步骤（嵌套的 if / repeat 作为一个整体条目），用于选择从哪一步继续 */
+  steps: { index: number; id: string; type: string; note?: string }[];
+}
+
+/** 卡住后用户的选择：从建议处继续 / 重试失败的那一步 / 跳过它 / 从指定步骤继续 */
+export type ResolveAction = 'continue' | 'retry' | 'skip' | 'goto';
+
 export interface RunView {
   runId: string;
   ruleId: string;
@@ -42,6 +58,8 @@ export interface RunView {
   /** 条件满足或页面跳转后会自动继续（同时仍可点「继续」） */
   autoResume?: boolean;
   errorCode?: string;
+  /** 步骤失败暂停（status 为 handoff）时的信息 */
+  stuck?: StuckView;
 }
 
 export interface RecordingView {
@@ -84,6 +102,11 @@ export interface RpcMethods {
   'run.abort': { params: { runId: string }; result: undefined };
   /** 交还后用户点「继续」 */
   'run.confirm': { params: { runId: string }; result: undefined };
+  /** 步骤失败暂停后用户的选择；goto 需要 index（0..steps.length） */
+  'run.resolve': {
+    params: { runId: string; action: ResolveAction; index?: number };
+    result: undefined;
+  };
   'run.dismiss': { params: { runId: string }; result: undefined };
 
   'rule.approve': { params: { ruleId: string }; result: undefined };

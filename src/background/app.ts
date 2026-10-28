@@ -195,6 +195,10 @@ export function startApp(): void {
       runner.confirm(runId);
       return undefined;
     },
+    async 'run.resolve'({ runId, action, index }) {
+      runner.resolve(runId, action, index);
+      return undefined;
+    },
     async 'run.dismiss'({ runId }) {
       await runner.dismiss(runId);
       return undefined;

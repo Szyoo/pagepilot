@@ -422,7 +422,7 @@ export class FakeBackend {
       return;
     }
 
-    const page = /^\/pages\/([a-z-]+\.html)$/.exec(p)?.[1];
+    const page = /^\/pages\/([a-z0-9-]+\.html)$/.exec(p)?.[1];
     if (page && req.method === 'GET') {
       let html: string;
       try {

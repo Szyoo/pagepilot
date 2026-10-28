@@ -85,6 +85,7 @@ body {
   background: var(--bg);
 }
 button,
+select,
 input {
   font-family: inherit;
 }
@@ -441,6 +442,14 @@ dl.meta {
   border-color: var(--red);
   background: var(--bad-bg);
   color: var(--bad-text);
+}
+.stuck-goto {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stuck-goto select {
+  color: var(--text);
 }
 .banners {
   padding: 12px 16px 0;

@@ -121,7 +121,7 @@
 ```
 
 - `status`：`succeeded` / `failed` / `aborted`（用户中止）/ `handedOff`（以 `final` 交还结束）。
-- 步骤 `status`：`succeeded` / `failed` / `skipped` / `handedOff`。
+- 步骤 `status`：`succeeded` / `failed` / `skipped` / `handedOff`（`handoff` 步骤，或步骤失败暂停后由用户手动处理、被用户越过的步骤）。同一步骤重试或被跳回重新执行时，可能出现多条记录。
 - 错误码：`TARGET_NOT_FOUND`、`TIMEOUT`、`ASSERT_FAILED`、`NAVIGATION_FAILED`、`PERMISSION_DENIED`、`DATA_MISSING`、`SECRET_ORIGIN_DENIED`、`REPEAT_EXHAUSTED`、`USER_ABORTED`、`INTERNAL`。
 - 不包含页面文本、表单值、`extract` 结果或占位符解析结果。
 

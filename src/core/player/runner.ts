@@ -4,12 +4,14 @@ import type { LocalData } from '../../schema/profile';
 import type { Condition, Rule, Step } from '../../schema/rule';
 import type { ActResult, PrepareResult } from '../../shared/content-api';
 import { hostnameOf, matchesGlob } from '../../shared/glob';
-import type { RunView } from '../../shared/rpc';
+import { describeError, stepLabel } from '../../shared/labels';
+import type { ResolveAction, RunView, StuckView } from '../../shared/rpc';
 import { loadSettings, type Settings } from '../../shared/settings';
 import { getItem, setItem, sleep, uuid } from '../../shared/storage';
 import { renderTemplate } from '../../shared/template';
 import { missingData, resolvePlaceholder, VaultError } from '../vault';
 import { TrustedInput } from './input';
+import { suggestResume } from './resume';
 import { command, ensureContent, type Located, locate, toTopViewport } from './tabs';
 
 /**
@@ -23,6 +25,16 @@ export class RunError extends Error {
     message?: string,
   ) {
     super(message ?? code);
+  }
+}
+
+/** 叶子步骤重试用尽仍失败，且可以暂停交给用户处理（由所在的 execList 接住） */
+class StepFailed extends RunError {
+  constructor(
+    readonly step: Step,
+    cause: RunError,
+  ) {
+    super(cause.code, cause.message);
   }
 }
 
@@ -67,6 +79,8 @@ export interface PersistedRun {
   relogins: number;
   aborted?: boolean;
   handoffConfirmed?: boolean;
+  /** 步骤失败后暂停等用户处理 */
+  stuck?: StuckView;
 }
 
 export interface RunnerDeps {
@@ -88,8 +102,14 @@ interface Ctx {
   resume: (CursorEntry | undefined)[];
   /** 上一步开始的时间，用于判断「之后发生的导航 / 新标签页」 */
   prevStepAt: number;
+  /** 当前叶子步骤开始的时间 */
+  curStepAt: number;
   captchaMutedUntil: number;
   persistCursor: boolean;
+  /** 当前所在的 repeat 嵌套深度；循环体里的失败不暂停 */
+  repeatDepth: number;
+  /** 正在重新登录（tryRelogin）时为正；登录步骤的失败不暂停 */
+  reloginDepth: number;
 }
 
 const STORE = 'runs';
@@ -102,6 +122,7 @@ export class Runner {
   private runs = new Map<string, PersistedRun>();
   private aborted = new Set<string>();
   private confirmed = new Set<string>();
+  private resolutions = new Map<string, { action: ResolveAction; index?: number }>();
   private active = new Set<string>();
   private navStart = new Map<number, number>();
   private newTabs: { id: number; at: number }[] = [];
@@ -152,6 +173,7 @@ export class Runner {
         ...(r.needsConfirm !== undefined ? { needsConfirm: r.needsConfirm } : {}),
         ...(r.autoResume ? { autoResume: true } : {}),
         ...(r.errorCode ? { errorCode: r.errorCode } : {}),
+        ...(r.stuck ? { stuck: r.stuck } : {}),
       }));
   }
 
@@ -178,8 +200,28 @@ export class Runner {
     this.aborted.add(runId);
   }
 
+  /** 交还后的「继续」；对步骤失败暂停的运行等价于 resolve(continue) */
   confirm(runId: string): void {
     this.confirmed.add(runId);
+  }
+
+  /** 步骤失败暂停后用户的选择 */
+  resolve(runId: string, action: ResolveAction, index?: number): void {
+    const run = this.runs.get(runId);
+    if (!run?.stuck || run.status !== 'handoff') throw new Error('该运行没有在等待处理失败的步骤');
+    if (action === 'goto') {
+      if (
+        index === undefined ||
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index > run.stuck.steps.length
+      ) {
+        throw new Error('要继续的步骤超出范围');
+      }
+      this.resolutions.set(runId, { action, index });
+      return;
+    }
+    this.resolutions.set(runId, { action });
   }
 
   async dismiss(runId: string): Promise<void> {
@@ -234,6 +276,16 @@ export class Runner {
       this.deps.changed();
       return;
     }
+    if (run.stuck) {
+      // 卡住期间 service worker 被回收：重新执行失败的那一步（失败则再次卡住），去掉上次的失败报告
+      const last = run.stepReports.at(-1);
+      if (last?.stepId === run.stuck.failedStepId && last.status === 'failed')
+        run.stepReports.pop();
+      delete run.stuck;
+      delete run.message;
+      delete run.needsConfirm;
+      run.status = 'running';
+    }
     const settings = await loadSettings();
     void this.execute(
       this.makeCtx(run, rule, settings, await this.deps.loadVault(), [...run.cursor]),
@@ -256,8 +308,11 @@ export class Runner {
       input: new TrustedInput(),
       resume,
       prevStepAt: Date.now(),
+      curStepAt: Date.now(),
       captchaMutedUntil: 0,
       persistCursor: true,
+      repeatDepth: 0,
+      reloginDepth: 0,
     };
   }
 
@@ -321,10 +376,12 @@ export class Runner {
       delete run.message;
       delete run.repeat;
       delete run.needsConfirm;
+      delete run.stuck;
       await ctx.input.detachAll();
       this.active.delete(run.runId);
       this.aborted.delete(run.runId);
       this.confirmed.delete(run.runId);
+      this.resolutions.delete(run.runId);
       await this.save();
       this.deps.changed();
       await this.sendReport(ctx).catch(() => undefined);
@@ -383,18 +440,33 @@ export class Runner {
   }
 
   private async execList(ctx: Ctx, steps: Step[], level: number): Promise<'done' | 'final'> {
-    const resumed = ctx.resume[level];
+    let resumed = ctx.resume[level];
     ctx.resume[level] = undefined;
-    for (let i = resumed?.i ?? 0; i < steps.length; i++) {
+    let i = resumed?.i ?? 0;
+    while (i < steps.length) {
       const step = steps[i];
-      if (!step) continue;
+      if (!step) {
+        i++;
+        continue;
+      }
       if (ctx.persistCursor) {
         ctx.run.cursor.length = level;
         ctx.run.cursor[level] = { i };
         await this.persist(ctx);
       }
-      const entry = i === resumed?.i ? resumed : undefined;
-      if ((await this.execStep(ctx, step, level, i, entry)) === 'final') return 'final';
+      // 恢复的游标（如 repeat 的轮次）只用于第一次执行的那一步，跳回同一步时不再沿用
+      const entry = resumed && i === resumed.i ? resumed : undefined;
+      resumed = undefined;
+      let result: 'ok' | 'final';
+      try {
+        result = await this.execStep(ctx, step, level, i, entry);
+      } catch (e) {
+        if (!(e instanceof StepFailed) || e.step !== step) throw e;
+        i = await this.stuck(ctx, steps, i, e);
+        continue;
+      }
+      if (result === 'final') return 'final';
+      i++;
     }
     return 'done';
   }
@@ -430,7 +502,11 @@ export class Runner {
     const maxAttempts = step.retries + 1;
     while (attempts < maxAttempts) {
       attempts++;
-      ctx.prevStepAt = attempts === 1 ? started : ctx.prevStepAt;
+      if (attempts === 1) {
+        // 等待导航 / 新标签页从上一步开始时算起：上一步（如点击）触发的跳转可能在本步开始前就已发生
+        ctx.prevStepAt = ctx.curStepAt;
+        ctx.curStepAt = started;
+      }
       try {
         await this.runLeaf(ctx, step);
         ctx.run.stepReports.push({
@@ -465,6 +541,10 @@ export class Runner {
     };
     ctx.run.stepReports.push(failed);
     if (failed.status === 'skipped') return 'ok';
+    // 循环体里某轮失败会进入下一轮；重新登录时登录步骤失败按原样处理；其余暂停交给用户
+    if (lastError.code !== 'USER_ABORTED' && ctx.repeatDepth === 0 && ctx.reloginDepth === 0) {
+      throw new StepFailed(step, lastError);
+    }
     throw lastError;
   }
 
@@ -481,10 +561,12 @@ export class Runner {
     const savedPersist = ctx.persistCursor;
     const savedCursor = run.cursor.map((c) => ({ ...c }));
     ctx.persistCursor = false;
+    ctx.reloginDepth++;
     run.phase = 'login';
     try {
       await this.execList(ctx, rule.login.steps, level + 8);
     } finally {
+      ctx.reloginDepth--;
       run.phase = 'main';
       ctx.persistCursor = savedPersist;
       run.cursor = savedCursor;
@@ -900,11 +982,14 @@ export class Runner {
         }
       }
 
+      ctx.repeatDepth++;
       try {
         if ((await this.execList(ctx, step.steps, level + 1)) === 'final') return 'final';
       } catch (e) {
         if (!(e instanceof RunError) || FATAL.includes(e.code)) throw e;
         // 本轮失败，进入下一轮
+      } finally {
+        ctx.repeatDepth--;
       }
 
       if (await this.evalCondition(ctx, step.until).catch(() => false)) {
@@ -926,5 +1011,105 @@ export class Runner {
       return 'ok';
     }
     throw new RunError('REPEAT_EXHAUSTED');
+  }
+
+  // ---- 步骤失败暂停 ----
+
+  /**
+   * 叶子步骤失败后暂停，等用户在页面上手动处理后选择从哪一步继续。
+   * 返回同一层里接着执行的索引（等于 steps.length 表示这一层已完成）。
+   */
+  private async stuck(
+    ctx: Ctx,
+    steps: Step[],
+    failedIndex: number,
+    err: StepFailed,
+  ): Promise<number> {
+    const { run } = ctx;
+    const step = err.step;
+    const failedAt = Date.now();
+    const reportIndex = run.stepReports.length - 1;
+    const detail = err.message && err.message !== err.code ? `（${err.message}）` : '';
+    const errorText = `${describeError(err.code)}${detail}`;
+    const stuck: StuckView = {
+      failedStepId: step.id,
+      failedIndex,
+      errorCode: err.code,
+      errorText,
+      suggestedIndex: failedIndex,
+      steps: steps.map((s, index) => {
+        const note = s.note?.trim();
+        return { index, id: s.id, type: s.type, ...(note ? { note } : {}) };
+      }),
+    };
+    const message = `第 ${failedIndex + 1} 步「${stepLabel(step)}」失败：${errorText}。你可以在页面上手动处理，然后点「继续」`;
+    run.stuck = stuck;
+    run.status = 'handoff';
+    run.message = message;
+    run.needsConfirm = true;
+    delete run.autoResume;
+    this.confirmed.delete(run.runId);
+    this.resolutions.delete(run.runId);
+    await this.persist(ctx);
+    this.deps.notify(ctx.rule.name, message, false);
+
+    const suggest = async () => {
+      const tab = await browser.tabs.get(run.tabId).catch(() => undefined);
+      const navigated = (this.navStart.get(run.tabId) ?? 0) >= failedAt;
+      return suggestResume(steps, failedIndex, tab?.url ?? '', navigated);
+    };
+
+    let choice: { action: ResolveAction; index?: number } | undefined;
+    let nextCheck = 0;
+    while (!choice) {
+      this.checkAbort(ctx);
+      choice =
+        this.resolutions.get(run.runId) ??
+        (this.confirmed.has(run.runId) ? { action: 'continue' } : undefined);
+      if (choice) break;
+      if (Date.now() >= nextCheck) {
+        nextCheck = Date.now() + 1000;
+        const next = await suggest();
+        if (next !== stuck.suggestedIndex) {
+          stuck.suggestedIndex = next;
+          await this.persist(ctx);
+        }
+      }
+      await sleep(POLL_MS);
+    }
+    this.resolutions.delete(run.runId);
+    this.confirmed.delete(run.runId);
+
+    const target =
+      choice.action === 'continue'
+        ? stuck.suggestedIndex
+        : choice.action === 'retry'
+          ? failedIndex
+          : choice.action === 'skip'
+            ? failedIndex + 1
+            : Math.min(Math.max(choice.index ?? failedIndex, 0), steps.length);
+
+    const report = run.stepReports[reportIndex];
+    if (choice.action === 'skip') {
+      if (report) report.status = 'skipped';
+    } else if (target > failedIndex) {
+      // 失败的那一步与用户手动越过的步骤记为「用户手动处理」
+      if (report) report.status = 'handedOff';
+      for (let k = failedIndex + 1; k < target; k++) {
+        const s = steps[k];
+        if (s)
+          run.stepReports.push({ stepId: s.id, status: 'handedOff', attempts: 0, durationMs: 0 });
+      }
+    }
+
+    // 用户可能刚在设置页补了本地数据
+    ctx.vault = await this.deps.loadVault();
+    await ensureContent(run.tabId).catch(() => undefined);
+    run.status = 'running';
+    delete run.stuck;
+    delete run.message;
+    delete run.needsConfirm;
+    await this.persist(ctx);
+    return target;
   }
 }

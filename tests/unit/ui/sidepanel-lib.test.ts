@@ -3,9 +3,13 @@ import {
   adminUrl,
   connectionStatus,
   describeError,
+  failedStepText,
   filterRules,
   formatDuration,
+  resumeLabel,
   sortRuns,
+  stepLabel,
+  stepOptionLabel,
 } from '../../../src/entrypoints/sidepanel/lib';
 import type { BgState, RuleView, RunView } from '../../../src/shared/rpc';
 
@@ -187,5 +191,43 @@ describe('sortRuns', () => {
       run({ runId: 'active', status: 'handoff', startedAt: 5 }),
     ]);
     expect(sorted.map((r) => r.runId)).toEqual(['active', 'new-done', 'old-done']);
+  });
+});
+
+describe('步骤失败暂停的文案', () => {
+  const stuck = {
+    failedStepId: 's2',
+    failedIndex: 1,
+    errorCode: 'TARGET_NOT_FOUND',
+    suggestedIndex: 1,
+    steps: [
+      { index: 0, id: 's1', type: 'click' },
+      { index: 1, id: 's2', type: 'click', note: '点「下一步」' },
+      { index: 2, id: 's3', type: 'waitFor', note: '  ' },
+    ],
+  };
+
+  it('stepLabel：优先 note，空白 note 用类型人话，未知类型原样', () => {
+    expect(stepLabel({ type: 'click', note: '点「下一步」' })).toBe('点「下一步」');
+    expect(stepLabel({ type: 'waitFor', note: '  ' })).toBe('等待');
+    expect(stepLabel({ type: 'open' })).toBe('打开网页');
+    expect(stepLabel({ type: 'weird' })).toBe('weird');
+  });
+
+  it('stepOptionLabel 带序号', () => {
+    expect(stepOptionLabel({ index: 2, id: 's3', type: 'waitFor' })).toBe('3. 等待');
+  });
+
+  it('failedStepText', () => {
+    expect(failedStepText(stuck)).toBe('第 2 步「点「下一步」」');
+  });
+
+  it('resumeLabel：从建议的那一步继续', () => {
+    expect(resumeLabel(stuck)).toBe('从第 2 步「点「下一步」」继续');
+    expect(resumeLabel({ ...stuck, suggestedIndex: 2 })).toBe('从第 3 步「等待」继续');
+  });
+
+  it('resumeLabel：建议位置等于步骤数时这一段已完成', () => {
+    expect(resumeLabel({ ...stuck, suggestedIndex: 3 })).toBe('这一段已完成，继续后面的步骤');
   });
 });

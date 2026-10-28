@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>第二步</title>
+  </head>
+  <body>
+    <h1>第二步</h1>
+    <button id="done" type="button">完成</button>
+    <p id="result"></p>
+    <script>
+      document.getElementById('done').addEventListener('click', () => {
+        document.getElementById('result').textContent = '已完成';
+      });
+    </script>
+  </body>
+</html>
