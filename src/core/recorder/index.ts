@@ -1,5 +1,5 @@
 import type { RecordedAction } from '../../shared/content-api';
-import { generateLocator, isSensitive } from '../selector';
+import { generateLocator, isSensitive, isUserCodeField } from '../selector';
 
 /** content 侧录制：捕获阶段监听用户操作，交给 emit 上报给后台聚合 */
 
@@ -33,6 +33,7 @@ export function createRecorder(emit: (action: RecordedAction) => void) {
       locator: generateLocator(el),
       value: el.value,
       sensitive: isSensitive(el),
+      userCode: isUserCodeField(el),
       fieldName: fieldName(el),
     });
   };

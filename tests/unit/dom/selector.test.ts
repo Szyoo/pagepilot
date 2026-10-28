@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   generateLocator,
   isSensitive,
+  isUserCodeField,
   isVisible,
   nameOf,
   resolve,
@@ -361,6 +362,24 @@ describe('isVisible', () => {
     html('<div id="a" style="visibility:hidden">x</div><div id="b" style="display:none">y</div>');
     expect(isVisible($('#a'))).toBe(false);
     expect(isVisible($('#b'))).toBe(false);
+  });
+});
+
+describe('isUserCodeField', () => {
+  it('用途写在 title、placeholder、label 上的验证码 / 短信验证码也能识别', () => {
+    html(
+      '<input id="a" name="crtfKeyNo" title="Enter verification number">' +
+        '<input id="b" placeholder="보안문자를 입력하세요">' +
+        '<label for="c">短信验证码</label><input id="c" name="code1">' +
+        '<input id="d" name="smsCode">' +
+        '<input id="e" name="userNm" title="Enter your name">' +
+        // 接短信用的手机号：名字含 sms、网站还标了 one-time-code，但不是验证码
+        '<input id="f" name="smsNo" title="휴대폰 번호" autocomplete="one-time-code">',
+    );
+    for (const id of ['#a', '#b', '#c', '#d']) expect(isUserCodeField($(id))).toBe(true);
+    for (const id of ['#e', '#f']) expect(isUserCodeField($(id))).toBe(false);
+    // 验证码类输入同时不采集值
+    expect(isSensitive($('#a'))).toBe(true);
   });
 });
 

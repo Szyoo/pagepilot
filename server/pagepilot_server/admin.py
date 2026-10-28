@@ -35,7 +35,51 @@ def clamp_limit(limit: int | None) -> int:
 MAX_INFERRED_URLS = 5
 
 # 验证码、短信验证码这类每次都不同的输入，不可能存进本地保险库
-_USER_INPUT_KEY = re.compile(r"captcha|verif|otp|sms|one[-_]?time|验证码", re.IGNORECASE)
+# “sms” 单独出现多半是接短信的手机号（如 smsNo），要和 code / auth / verif 连在一起才算
+_USER_INPUT_KEY = re.compile(r"captcha|verif|otp|sms[-_ ]?(code|auth|verif|key)|one[-_]?time|验证码", re.IGNORECASE)
+# 判断“录了字面值的验证码 / 短信验证码输入框”：看定位器里可读的名称（aria 名称、id、name）
+_USER_CODE_HINT = re.compile(
+    r"captcha|verif|otp|sms[-_ ]?(code|auth|verif|key)|one[-_ ]?time|auth(entication)?[-_ ]?(code|no|number|key)|"
+    r"security[-_ ]?code|验证码|校验码|認証|인증|보안문자",
+    re.IGNORECASE,
+)
+_CSS_NAMES = re.compile(r"#([A-Za-z0-9_-]+)|\[name=\"([^\"]+)\"\]")
+
+
+def _target_hints(target: Any) -> str:
+    """定位器里可读的部分：aria 名称、text 文字、testid、css 里的 id / name。"""
+    if not isinstance(target, dict):
+        return ""
+    parts: list[str] = []
+    for st in target.get("strategies") or []:
+        if not isinstance(st, dict) or not isinstance(st.get("value"), str):
+            continue
+        kind, value = st.get("kind"), st["value"]
+        if kind in ("aria", "text", "testid"):
+            parts.append(value)
+        elif kind == "css":
+            parts += [a or b for a, b in _CSS_NAMES.findall(value)]
+    return " ".join(parts)
+
+
+def _code_handoff(s: dict[str, Any], min_length: int | None) -> dict[str, Any]:
+    handoff: dict[str, Any] = {
+        "id": s.get("id"),
+        "type": "handoff",
+        "message": CAPTCHA_HANDOFF_MESSAGE,
+        "resumeWhen": "userConfirm",
+    }
+    target = s.get("target")
+    if isinstance(target, dict):
+        # 输入够位数（或输入框填满）就自动继续；侧边栏的「继续」按钮仍可手动继续
+        handoff["resumeWhen"] = "condition"
+        if min_length:
+            handoff["until"] = {"kind": "element", "target": target, "minLength": min_length}
+        else:
+            handoff["until"] = {"kind": "element", "target": target, "filled": True}
+    if isinstance(s.get("note"), str):
+        handoff["note"] = s["note"]
+    return handoff
 _SECRET_PLACEHOLDER = re.compile(r"^\{\{\s*secret\.([A-Za-z0-9_.-]+)\s*\}\}$")
 CAPTCHA_HANDOFF_MESSAGE = "请在页面上输入验证码；输完会自动继续，也可以点「继续」"
 
@@ -64,26 +108,17 @@ def captchas_to_handoff(steps: list[Any], min_length: int | None = None) -> list
             out.append(s)
             continue
         value = s.get("value")
-        m = _SECRET_PLACEHOLDER.match(value) if s.get("type") == "fill" and isinstance(value, str) else None
-        if m and _USER_INPUT_KEY.search(m.group(1)):
-            handoff: dict[str, Any] = {
-                "id": s.get("id"),
-                "type": "handoff",
-                "message": CAPTCHA_HANDOFF_MESSAGE,
-                "resumeWhen": "userConfirm",
-            }
-            target = s.get("target")
-            if isinstance(target, dict):
-                # 输入框填满（有 maxlength 时达到它，否则非空）就自动继续；侧边栏的「继续」按钮仍可手动继续
-                handoff["resumeWhen"] = "condition"
-                if min_length:
-                    # 验证码实际位数与输入框的 maxlength 不一致时，用明确的位数判断
-                    handoff["until"] = {"kind": "element", "target": target, "minLength": min_length}
-                else:
-                    handoff["until"] = {"kind": "element", "target": target, "filled": True}
-            if isinstance(s.get("note"), str):
-                handoff["note"] = s["note"]
-            out.append(handoff)
+        is_fill = s.get("type") == "fill" and isinstance(value, str)
+        m = _SECRET_PLACEHOLDER.match(value) if is_fill else None
+        if m and (_USER_INPUT_KEY.search(m.group(1)) or _USER_CODE_HINT.search(_target_hints(s.get("target")))):
+            # 录成凭据的验证码：录制时的位数已丢失，用调用方给的位数，否则按输入框填满判断
+            out.append(_code_handoff(s, min_length))
+            continue
+        if is_fill and not m and "{{" not in value and _USER_CODE_HINT.search(_target_hints(s.get("target"))):
+            # 录成字面值的验证码（如短信验证码）：每次都不同，按录制时输入的位数等用户输完
+            # 录制时实际输入的位数最可靠；调用方给的位数只用于值已丢失（录成凭据）的那一类
+            typed = len(value)
+            out.append(_code_handoff(s, typed if 1 <= typed <= 20 else min_length))
             continue
         converted = dict(s)
         for key in ("then", "else", "steps"):
@@ -414,6 +449,8 @@ def make_router() -> APIRouter:
                                  p: Principal = Depends(require_user)):
         detail = _get(request.app.state.db, RECORDINGS, p, recording_id)
         steps = detail.get("steps") if isinstance(detail.get("steps"), list) else []
+        # 对生成规则时会得到的步骤做解读（验证码类输入已改成交还），描述与实际运行一致
+        steps = captchas_to_handoff(steps)
         if not ai.flat_steps(steps):
             return _invalid(["steps: 录制里没有步骤"])
         try:

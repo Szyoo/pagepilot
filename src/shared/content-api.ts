@@ -63,6 +63,8 @@ export type RecordedAction =
       value: string;
       /** 敏感字段（密码、支付、验证码等）：值由后台替换成占位符 */
       sensitive: boolean;
+      /** 验证码、短信验证码这类当场输入的字段：录成交还给用户的步骤 */
+      userCode: boolean;
       fieldName: string;
     }
   | { kind: 'select'; locator: Locator; value: string }
