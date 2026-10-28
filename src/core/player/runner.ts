@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser';
 import type { ErrorCode, StepReport, UplinkBody } from '../../schema/message';
 import type { LocalData } from '../../schema/profile';
-import type { Condition, Rule, Step } from '../../schema/rule';
+import { type Condition, flattenSteps, type Rule, type Step } from '../../schema/rule';
 import type { ActResult, PrepareResult } from '../../shared/content-api';
 import { hostnameOf, matchesGlob } from '../../shared/glob';
 import { describeError, stepLabel } from '../../shared/labels';
@@ -605,6 +605,8 @@ export class Runner {
   }
 
   private async guardCaptcha(ctx: Ctx): Promise<void> {
+    // 规则里已经写了交还步骤：作者安排好了在哪一步亲自处理验证码，不再自动检测、提前暂停
+    if (usesManualHandoff(ctx.rule)) return;
     if (Date.now() < ctx.captchaMutedUntil) return;
     const found = async () =>
       (
@@ -1136,4 +1138,9 @@ export function samePage(a: string, b: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** 规则（含登录步骤与嵌套步骤）里有没有交还步骤；有则不做验证码的自动检测 */
+export function usesManualHandoff(rule: Pick<Rule, 'steps' | 'login'>): boolean {
+  return flattenSteps(rule).some((s) => s.type === 'handoff');
 }
