@@ -417,7 +417,14 @@ def make_router() -> APIRouter:
     @router.get("/api/ai/status")
     async def ai_status(request: Request, p: Principal = Depends(require_user)):
         client = ai.get_client(request.app.state)
-        return {"available": client is not None, "model": client.model if client else None}
+        public = request.app.state.config.bridge_public_url
+        # bridgeUrl：扩展从这里得知 claude-bridge 的浏览器接口地址，不需要用户配置
+        return {
+            "available": client is not None,
+            "model": client.model if client else None,
+            "bridgeUrl": public or None,
+            "scope": request.app.state.config.bridge_scope,
+        }
 
     # ----- 录制 -----
 
