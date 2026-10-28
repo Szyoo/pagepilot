@@ -1,5 +1,6 @@
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useState } from 'react';
 import { browser } from 'wxt/browser';
+import type { BridgeInfo } from '../../shared/bridge-discovery';
 import type { BgState } from '../../shared/rpc';
 import { rpc } from '../../shared/rpc';
 import { type Settings, saveSettings } from '../../shared/settings';
@@ -11,7 +12,12 @@ import { Section } from './Section';
 // 构建期默认地址（来自本机 .env）；已配置时界面默认不显示地址输入
 const ENV_BACKEND = (import.meta.env.VITE_DEFAULT_BACKEND_URL as string | undefined) || '';
 const ENV_PORTAL = (import.meta.env.VITE_DEFAULT_PORTAL_URL as string | undefined) || '';
-const ENV_BRIDGE = (import.meta.env.VITE_DEFAULT_BRIDGE_URL as string | undefined) || '';
+
+const BRIDGE_SOURCE: Record<string, string> = {
+  settings: '手动设置',
+  backend: '来自后台',
+  build: '构建默认值',
+};
 
 export function ConnectionSection({ settings, bg }: { settings: Settings; bg: BgState | null }) {
   const [backendUrl, setBackendUrl] = useState(settings.backendUrl ?? '');
@@ -23,8 +29,22 @@ export function ConnectionSection({ settings, bg }: { settings: Settings; bg: Bg
   // 密码只存在于输入框的组件状态中：不写入任何存储、不打印，登录后清空
   const [password, setPassword] = useState('');
   const [saved, setSaved] = useState(false);
+  const [bridge, setBridge] = useState<BridgeInfo | null>(null);
   const save = useAction();
   const auth = useAction();
+
+  // 当前生效的 AI 服务地址与来源；登录状态变化后重新查询
+  const authStatus = bg?.auth.status;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 登录状态变化时需要重新查询
+  useEffect(() => {
+    let alive = true;
+    rpc('ai.bridge')
+      .then((b) => alive && setBridge(b))
+      .catch(() => alive && setBridge(null));
+    return () => {
+      alive = false;
+    };
+  }, [authStatus]);
 
   const persist = async () => {
     const patch: Partial<Settings> = { transport, pollIntervalSec: Number(poll) };
@@ -34,12 +54,12 @@ export function ConnectionSection({ settings, bg }: { settings: Settings; bg: Bg
     // 与构建期默认地址相同的值不保存，这样重新构建时新的默认地址能生效
     if (b && b !== ENV_BACKEND) patch.backendUrl = b;
     if (p && p !== ENV_PORTAL) patch.portalUrl = p;
-    if (a && a !== ENV_BRIDGE) patch.bridgeUrl = a;
+    if (a) patch.bridgeUrl = a;
     // 清空或恢复默认时需要移除旧值：saveSettings 会与旧设置合并，因此显式置空
     const next = { ...patch } as Record<string, unknown>;
     if (!b || b === ENV_BACKEND) next.backendUrl = undefined;
     if (!p || p === ENV_PORTAL) next.portalUrl = undefined;
-    if (!a || a === ENV_BRIDGE) next.bridgeUrl = undefined;
+    if (!a) next.bridgeUrl = undefined;
     await saveSettings(next as Partial<Settings>);
   };
 
@@ -162,7 +182,11 @@ export function ConnectionSection({ settings, bg }: { settings: Settings; bg: Bg
             </Field>
             <Field
               label="AI 服务地址"
-              hint="claude-bridge 的浏览器接口，例如 https://bridge.example.com/api；留空则不能使用「请 AI 看看」"
+              hint={`一般留空：扩展会从后台自动获取。需要覆盖时填 claude-bridge 的浏览器接口，例如 https://bridge.example.com/api。${
+                bridge?.bridgeUrl
+                  ? `当前生效：${bridge.bridgeUrl}（${BRIDGE_SOURCE[bridge.source ?? ''] ?? '未知来源'}）`
+                  : '当前没有可用的地址。'
+              }`}
             >
               {(id) => (
                 <input

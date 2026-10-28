@@ -196,3 +196,80 @@ details.adv > summary {
   cursor: pointer;
   color: var(--text-dim);
 }
+
+/* AI 修改：输入框、提案与前后对比 */
+.ai-edit {
+  display: grid;
+  gap: 8px;
+}
+.ai-edit .toolbar {
+  margin: 0;
+}
+textarea.ai-edit-input {
+  min-height: 72px;
+  font-family: inherit;
+  font-size: 14px;
+  white-space: pre-wrap;
+}
+.ai-changes {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+.diff-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.diff-item {
+  padding: 8px 10px;
+  border: 1px solid var(--glass-border);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--inner-bg);
+  min-width: 0;
+}
+.diff-item.add {
+  border-left-color: var(--ok);
+  background: var(--tint-green-bg);
+}
+.diff-item.del {
+  border-left-color: var(--err);
+  background: var(--tint-red-bg);
+}
+.diff-item.mod {
+  border-left-color: var(--warn);
+}
+.diff-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+}
+.diff-note {
+  margin-top: 4px;
+  word-break: break-word;
+}
+.diff-item.del .diff-note {
+  text-decoration: line-through;
+}
+.diff-fields {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  word-break: break-all;
+}
+.diff-old {
+  color: var(--err);
+  text-decoration: line-through;
+}
+.diff-new {
+  color: var(--ok);
+}
+.json-pre {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 12px;
+  white-space: pre;
+}

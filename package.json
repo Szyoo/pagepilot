@@ -1,6 +1,6 @@
 {
   "name": "pagepilot",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "可配置、云端下发的网页自动化 Chrome 扩展：页面信息抓取、操作录制与规则回放",
   "private": true,
   "type": "module",

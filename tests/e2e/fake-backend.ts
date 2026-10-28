@@ -136,6 +136,15 @@ export class FakeBackend {
    * - poll：轮询端点返回 500
    */
   readonly fail = { ws: false, stream: false, poll: false };
+  /** GET /api/ai/status 的响应；null 表示后台没有这个接口（404） */
+  aiStatus: {
+    available: boolean;
+    model?: string;
+    bridgeUrl: string | null;
+    scope?: string;
+  } | null = null;
+  /** /api/ai/status 被请求的次数 */
+  aiStatusRequests = 0;
 
   private server: Server;
   private wss = new WebSocketServer({ noServer: true });
@@ -372,6 +381,21 @@ export class FakeBackend {
         return;
       }
       json(res, { sub, role: 'member' });
+      return;
+    }
+
+    if (p === '/api/ai/status' && req.method === 'GET') {
+      if (!this.sessionOf(req)) {
+        this.reject(req, res, p);
+        return;
+      }
+      this.aiStatusRequests++;
+      if (!this.aiStatus) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      json(res, { model: null, scope: 'pagepilot', ...this.aiStatus });
       return;
     }
 

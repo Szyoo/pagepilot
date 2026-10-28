@@ -229,9 +229,15 @@ def test_bridge_client_task_timeout_kind(monkeypatch):
 
 def test_status_unconfigured_and_configured(make_client):
     c = make_client()
-    assert c.get("/api/ai/status", headers=USER).json() == {"available": False, "model": None}
+    assert c.get("/api/ai/status", headers=USER).json() == {
+        "available": False,
+        "model": None,
+        "bridgeUrl": None,
+        "scope": "pagepilot",
+    }
     c2 = make_client(bridge_url="https://bridge.example.com", bridge_token="tok")
-    assert c2.get("/api/ai/status", headers=USER).json() == {"available": True, "model": "claude-haiku-5-5"}
+    st = c2.get("/api/ai/status", headers=USER).json()
+    assert st["available"] is True and st["model"] == "claude-haiku-5-5"
 
 
 def test_describe_unconfigured_503(client):
@@ -414,4 +420,13 @@ def test_describe_recording_uses_converted_steps(client):
     sent = json.loads(fake.calls[0])["steps"]
     assert [s["type"] for s in sent] == ["open", "handoff"]
     assert "12345" not in fake.calls[0]
+
+
+def test_status_reports_public_bridge_url(make_client):
+    c = make_client(bridge_url="http://bridge.internal:8770", bridge_token="tok", bridge_public_url="https://bridge.example.com/api")
+    st = c.get("/api/ai/status", headers=USER).json()
+    assert st["available"] is True
+    assert st["bridgeUrl"] == "https://bridge.example.com/api"
+    assert st["scope"] == "pagepilot"
+    assert make_client().get("/api/ai/status", headers=USER).json()["bridgeUrl"] is None
 

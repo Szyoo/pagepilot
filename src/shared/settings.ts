@@ -6,7 +6,7 @@ export const settingsSchema = z.object({
   backendUrl: z.url().optional(),
   /** 门户地址（登录接口所在），为空时与后台地址相同 */
   portalUrl: z.url().optional(),
-  /** claude-bridge 浏览器接口的 base（「请 AI 看看」用），例如 https://bridge.example.com/api */
+  /** 手动指定的 claude-bridge 浏览器接口 base（高级，一般留空：扩展从后台自动获取），例如 https://bridge.example.com/api */
   bridgeUrl: z.url().optional(),
   /** 实时通道优先级 */
   // 默认 SSE：门户会话 cookie 通常是 SameSite=Lax，浏览器不会在 WebSocket 握手里带上它
@@ -30,11 +30,9 @@ export async function loadSettings(): Promise<Settings> {
   const stored = (await browser.storage.local.get(KEY))[KEY] as object | undefined;
   const envBackend = import.meta.env.VITE_DEFAULT_BACKEND_URL as string | undefined;
   const envPortal = import.meta.env.VITE_DEFAULT_PORTAL_URL as string | undefined;
-  const envBridge = import.meta.env.VITE_DEFAULT_BRIDGE_URL as string | undefined;
   const parsed = settingsSchema.safeParse({
     ...(envBackend ? { backendUrl: envBackend } : {}),
     ...(envPortal ? { portalUrl: envPortal } : {}),
-    ...(envBridge ? { bridgeUrl: envBridge } : {}),
     ...(stored ?? {}),
   });
   return parsed.success ? parsed.data : settingsSchema.parse({});

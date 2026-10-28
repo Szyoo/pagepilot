@@ -39,6 +39,8 @@ class Config:
     bridge_token: str = ""
     bridge_model: str = "claude-haiku-5-5"
     bridge_scope: str = "pagepilot"
+    # claude-bridge 浏览器接口的对外地址（扩展的「请 AI 看看」用它直连聊天）；后台自己调用走 bridge_url
+    bridge_public_url: str = ""
     ai_timeout: float = 120.0
 
     @classmethod
@@ -58,6 +60,7 @@ class Config:
             bridge_token=os.environ.get("CLAUDE_BRIDGE_TOKEN", "").strip(),
             bridge_model=os.environ.get("CLAUDE_BRIDGE_MODEL", "").strip() or "claude-haiku-5-5",
             bridge_scope=os.environ.get("CLAUDE_BRIDGE_SCOPE", "").strip() or "pagepilot",
+            bridge_public_url=os.environ.get("CLAUDE_BRIDGE_PUBLIC_URL", "").strip().rstrip("/"),
             ai_timeout=float(_int("AI_TIMEOUT_SEC", 120, minimum=5)),
         )
 

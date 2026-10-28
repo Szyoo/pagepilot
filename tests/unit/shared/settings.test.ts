@@ -66,10 +66,10 @@ describe('settings', () => {
     expect((await loadSettings()).portalUrl).toBe('https://portal.example.com');
   });
 
-  it('环境变量提供默认 AI 服务（bridge）地址，存储值优先；未配置时为空', async () => {
+  it('AI 服务（bridge）地址只来自手动设置，构建期默认值不混入设置', async () => {
     expect((await loadSettings()).bridgeUrl).toBeUndefined();
     vi.stubEnv('VITE_DEFAULT_BRIDGE_URL', 'https://bridge-env.example.com/api');
-    expect((await loadSettings()).bridgeUrl).toBe('https://bridge-env.example.com/api');
+    expect((await loadSettings()).bridgeUrl).toBeUndefined();
     await saveSettings({ bridgeUrl: 'https://bridge.example.com/api' });
     expect((await loadSettings()).bridgeUrl).toBe('https://bridge.example.com/api');
   });

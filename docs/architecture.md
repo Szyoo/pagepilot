@@ -15,7 +15,8 @@
 ### 请 AI 看看
 
 步骤失败暂停时，侧边栏「运行」卡片上有「请 AI 看看」：在侧边栏里打开 claude-bridge 的聊天组件，把中断的上下文交给 AI，用户可以继续追问。
-- 地址：设置 `bridgeUrl`（默认取构建期 `VITE_DEFAULT_BRIDGE_URL`），是 bridge 浏览器接口的 base；scope 固定为 `pagepilot`，bridge 侧给它配一个无工具、不联网的 profile。
+- 地址自动发现（RPC `ai.bridge`，`src/shared/bridge-discovery.ts`）：设置页手动填写的 `bridgeUrl`（高级覆盖）> 后台 `GET /api/ai/status` 返回的 `bridgeUrl` > 构建期 `VITE_DEFAULT_BRIDGE_URL`（可空）。后台结果在 background 内存里缓存 5 分钟，登录、登出与设置变化时清空；未登录或后台不可达时按其余来源取地址、`available` 为 false。地址是 bridge 浏览器接口的 base；scope 用后台返回的（缺省 `pagepilot`），bridge 侧给它配一个无工具、不联网的 profile。
+- 网站权限：地址不是构建期写进 `host_permissions` 的，就在用户点「开始分析」时 `permissions.request` 申请（与截图的 `<all_urls>` 合并成一次请求）；侧边栏打开时先发现地址并检查是否已有权限，保证请求在点击处理函数里立即发起。
 - 身份：沿用门户会话 cookie。侧边栏对 bridge 的 fetch 带 `credentials: 'include'`，EventSource 默认 `withCredentials`（`eventsource-credentials.ts`）；扩展持有 bridge 站点的网站访问权限，`SameSite=Lax` 的 cookie 也会带上。bridge 返回 401 时提示先在普通网页里登录门户。
 - 第一条消息由侧边栏用 `client.send` 发出（带只对这一轮生效的 `options.instructions` 系统提示），拿到对话后组件 `openThread`；之后的追问由组件直接发送。内容由 `src/shared/assist.ts` 生成：规则名称、失败步骤（序号、说明、类型、错误码与人话）、同一层前后各 3 步、PagePilot 建议的继续位置、页面地址（只留 origin + path）、页面上可见交互元素的概要。
 - 页面概要来自 RPC `capture.inspect`：只返回给侧边栏、不上报后台、不需要登录；最多 120 个元素，每个只有标签、角色、名称或文字（60 字以内）与敏感标记，输入类元素只取标签/aria-label/placeholder，不取值，敏感元素不带文字。

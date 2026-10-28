@@ -61,7 +61,9 @@ async function openAssist(panel: Page) {
 
 test.describe('卡住时「请 AI 看看」', () => {
   test.beforeEach(async ({ backend, bridge, ext }) => {
-    await ext.signIn({ bridgeUrl: bridge.url });
+    // 不在设置里填 bridge 地址：扩展从后台 /api/ai/status 自动获取
+    backend.aiStatus = { available: true, bridgeUrl: bridge.url, scope: 'pagepilot' };
+    await ext.signIn();
     backend.pushRule(stuckRule(backend.origin()));
     await ext.waitForState((st) => st.rules.some((r) => r.id === 'e2e-stuck'), '收到规则');
     await ext.rpc('rule.approve', { ruleId: 'e2e-stuck' });
@@ -164,6 +166,8 @@ test.describe('卡住时「请 AI 看看」', () => {
   }) => {
     const page = await context.newPage();
     await stuckWithFilledInput(page, ext, backend);
+    // 地址已在后台缓存里（5 分钟）：会话失效后面板仍能找到 bridge，由 bridge 返回 401
+    await ext.rpc('ai.bridge');
     backend.expireSessions();
     const panel = await openSidepanel(context, ext);
     const assist = await openAssist(panel);
@@ -176,4 +180,38 @@ test.describe('卡住时「请 AI 看看」', () => {
     expect(bridge.sends).toHaveLength(0);
     expect(bridge.uploads).toHaveLength(0);
   });
+
+  test('后台下发的地址：扩展不需要在设置里填写，面板按后台地址连接', async ({ ext, bridge }) => {
+    const info = await ext.rpc('ai.bridge');
+    expect(info).toMatchObject({
+      bridgeUrl: bridge.url,
+      scope: 'pagepilot',
+      available: true,
+      source: 'backend',
+    });
+  });
+});
+
+test.describe('后台没有接入 AI 服务', () => {
+  for (const [name, status] of [
+    ['available 为 false 且没有地址', { available: false, bridgeUrl: null }],
+    ['没有这个接口（404）', null],
+  ] as const) {
+    test(`${name}：提示后台还没有接入，不能开始分析`, async ({ context, backend, bridge, ext }) => {
+      backend.aiStatus = status;
+      await ext.signIn();
+      backend.pushRule(stuckRule(backend.origin()));
+      await ext.waitForState((st) => st.rules.some((r) => r.id === 'e2e-stuck'), '收到规则');
+      await ext.rpc('rule.approve', { ruleId: 'e2e-stuck' });
+      await ext.saveVault({});
+      const page = await context.newPage();
+      await stuckWithFilledInput(page, ext, backend);
+      const panel = await openSidepanel(context, ext);
+      const assist = await openAssist(panel);
+
+      await expect(assist.getByText('后台还没有接入 AI 服务')).toBeVisible();
+      await expect(assist.getByRole('button', { name: '开始分析' })).toBeDisabled();
+      expect(bridge.requests).toHaveLength(0);
+    });
+  }
 });

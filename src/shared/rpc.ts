@@ -1,6 +1,7 @@
 import { browser } from 'wxt/browser';
 import type { LocalData } from '../schema/profile';
 import type { Rule, Step } from '../schema/rule';
+import type { BridgeInfo } from './bridge-discovery';
 import type { InspectResult } from './content-api';
 
 /** 界面看到的规则摘要 */
@@ -117,6 +118,9 @@ export interface RpcMethods {
   'capture.page': { params: { tabId: number }; result: { count: number } };
   /** 「请 AI 看看」用的页面概要（最多 120 个元素、不带输入值），只返回给侧边栏，不上报后台 */
   'capture.inspect': { params: { tabId: number }; result: InspectResult };
+
+  /** 「请 AI 看看」用的 claude-bridge 地址：设置页覆盖 > 后台 /api/ai/status > 构建期默认值（5 分钟缓存） */
+  'ai.bridge': { params: undefined; result: BridgeInfo };
 
   'recording.start': { params: { tabId: number }; result: undefined };
   'recording.stop': { params: undefined; result: undefined };
