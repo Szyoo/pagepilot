@@ -5,7 +5,14 @@ import type { Step } from '../../../src/schema/rule';
 const base = { timeoutMs: 1000, retries: 0, optional: false };
 const css = (value: string) => ({ strategies: [{ kind: 'css' as const, value }] });
 const click = (id: string): Step => ({ ...base, id, type: 'click', target: css(`#${id}`) });
-const open = (id: string, url: string): Step => ({ ...base, id, type: 'open', url, newTab: false });
+const open = (id: string, url: string): Step => ({
+  ...base,
+  id,
+  type: 'open',
+  url,
+  newTab: false,
+  force: false,
+});
 const nav = (
   id: string,
   urlPattern?: string,

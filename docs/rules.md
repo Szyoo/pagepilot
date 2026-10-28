@@ -83,16 +83,16 @@
 
 ### 页面操作
 
-| type        | 字段                                      | 说明                                                |
-| ----------- | ----------------------------------------- | --------------------------------------------------- |
-| `open`      | `url`、`newTab`（默认 `false`）           | 打开页面                                            |
-| `click`     | `target`                                  | 点击                                                |
-| `fill`      | `target`、`value`、`clear`（默认 `true`） | 输入文本；唯一允许使用 `{{secret.x}}` 的位置        |
-| `select`    | `target`、`value`                         | 选择下拉项（按值或显示文本）                        |
-| `check`     | `target`、`checked`                       | 勾选 / 取消勾选                                     |
-| `press`     | `key`、可选 `target`                      | 按键，如 `Enter`、`Control+A`                       |
-| `switchTab` | `urlPattern`                              | 切换到 URL 匹配的已有标签页                         |
-| `extract`   | `target`、`saveAs`、`attr`（默认取文本）  | 读取值保存为 `{{var.<saveAs>}}`，只在本次运行内有效 |
+| type        | 字段                                                     | 说明                                                                                                                           |
+| ----------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `open`      | `url`、`newTab`（默认 `false`）、`force`（默认 `false`） | 打开页面；标签页已经停在同一页面（网站与路径相同、已加载完，忽略查询参数与锚点）时直接进入下一步，`force: true` 时总是重新打开 |
+| `click`     | `target`                                                 | 点击                                                                                                                           |
+| `fill`      | `target`、`value`、`clear`（默认 `true`）                | 输入文本；唯一允许使用 `{{secret.x}}` 的位置                                                                                   |
+| `select`    | `target`、`value`                                        | 选择下拉项（按值或显示文本）                                                                                                   |
+| `check`     | `target`、`checked`                                      | 勾选 / 取消勾选                                                                                                                |
+| `press`     | `key`、可选 `target`                                     | 按键，如 `Enter`、`Control+A`                                                                                                  |
+| `switchTab` | `urlPattern`                                             | 切换到 URL 匹配的已有标签页                                                                                                    |
+| `extract`   | `target`、`saveAs`、`attr`（默认取文本）                 | 读取值保存为 `{{var.<saveAs>}}`，只在本次运行内有效                                                                            |
 
 ### 等待与判断
 
