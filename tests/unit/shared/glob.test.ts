@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  entryUrlOf,
   globToRegExp,
   hostAllowed,
   hostnameOf,
   isMatchAll,
   matchesAnyGlob,
   matchesGlob,
+  openableUrlOf,
   originPatternOf,
 } from '../../../src/shared/glob';
 
@@ -113,5 +115,44 @@ describe('hostAllowed', () => {
 
   it('空列表一律拒绝', () => {
     expect(hostAllowed('example.com', [])).toBe(false);
+  });
+});
+
+describe('openableUrlOf：由匹配网址推出能直接打开的地址', () => {
+  it('没有通配符时原样返回', () => {
+    expect(openableUrlOf('https://example.com/en/main.do')).toBe('https://example.com/en/main.do');
+  });
+  it('取第一个通配符之前、到最后一个斜杠为止', () => {
+    expect(openableUrlOf('https://example.com/*')).toBe('https://example.com/');
+    expect(openableUrlOf('https://example.com/pages/step*')).toBe('https://example.com/pages/');
+    expect(openableUrlOf('https://example.com/a/b?.do')).toBe('https://example.com/a/');
+  });
+  it('协议或主机里有通配符、或不是网页地址时推不出', () => {
+    expect(openableUrlOf('https://*.example.com/*')).toBeNull();
+    expect(openableUrlOf('*://example.com/*')).toBeNull();
+    expect(openableUrlOf('<all_urls>')).toBeNull();
+    expect(openableUrlOf('ftp://example.com/file')).toBeNull();
+  });
+});
+
+describe('entryUrlOf：规则所属的页面', () => {
+  const match = { urls: ['https://example.com/*'] };
+  it('优先用最外层第一个 open 步骤的地址', () => {
+    const steps = [
+      { type: 'click' },
+      { type: 'open', url: 'https://example.com/en/main.do' },
+      { type: 'open', url: 'https://example.com/other' },
+    ];
+    expect(entryUrlOf({ steps, match })).toBe('https://example.com/en/main.do');
+  });
+  it('open 地址含占位符时改用匹配网址', () => {
+    const steps = [{ type: 'open', url: 'https://example.com/{{profile.lang}}/' }];
+    expect(entryUrlOf({ steps, match })).toBe('https://example.com/');
+  });
+  it('跳过推不出地址的匹配网址，都推不出时为 undefined', () => {
+    expect(
+      entryUrlOf({ steps: [], match: { urls: ['https://*.a.com/*', 'https://b.com/x/*'] } }),
+    ).toBe('https://b.com/x/');
+    expect(entryUrlOf({ steps: [], match: { urls: ['https://*.a.com/*'] } })).toBeUndefined();
   });
 });

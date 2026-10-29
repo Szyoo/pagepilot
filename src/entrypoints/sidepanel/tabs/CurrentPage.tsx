@@ -2,6 +2,7 @@ import { matchesAnyGlob } from '../../../shared/glob';
 import { type BgState, rpc } from '../../../shared/rpc';
 import { ensureTabAccess } from '../../../shared/ui/tabAccess';
 import { useAction } from '../../../shared/ui/useAction';
+import { openRulePage } from '../actions';
 import type { ActiveTab } from '../hooks';
 import { hostOf } from '../lib';
 import { Btn, Empty, ErrorLine } from '../parts';
@@ -23,6 +24,9 @@ export function CurrentPage({
   const url = tab?.url;
   const tabId = tab?.id;
   const rules = url ? state.rules.filter((r) => r.enabled && matchesAnyGlob(r.matchUrls, url)) : [];
+  // 当前页没有规则时，列出可以一键前往的规则
+  const elsewhere = state.rules.filter((r) => r.enabled && r.entryUrl);
+  const jump = useAction();
   const recordingBusy = state.recording.status !== 'idle';
 
   const doCapture = () => {
@@ -59,7 +63,30 @@ export function CurrentPage({
       </div>
 
       {rules.length === 0 ? (
-        <Empty title="这个页面还没有规则" sub="可以先录制一遍操作，再到管理页生成规则" />
+        <>
+          <Empty title="这个页面还没有规则" sub="可以先录制一遍操作，再到管理页生成规则" />
+          {elsewhere.length > 0 ? (
+            <section className="card" aria-label="去规则的页面">
+              <h3 className="section-title">去规则的页面</h3>
+              <ul style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {elsewhere.map((r) => (
+                  <li key={r.id} className="open-row">
+                    <span className="ellipsis" title={r.entryUrl}>
+                      {r.name}
+                    </span>
+                    <Btn
+                      size="sm"
+                      disabled={jump.busy}
+                      onClick={() => void jump.run(() => openRulePage(r.entryUrl))}
+                    >
+                      打开页面
+                    </Btn>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </>
       ) : (
         <ul className="list" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {rules.map((r) => (
@@ -82,7 +109,7 @@ export function CurrentPage({
           {record.busy ? '准备中…' : '开始录制'}
         </Btn>
       </div>
-      <ErrorLine>{capture.error ?? record.error}</ErrorLine>
+      <ErrorLine>{capture.error ?? record.error ?? jump.error}</ErrorLine>
     </>
   );
 }

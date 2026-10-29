@@ -34,6 +34,53 @@ export function originPatternOf(glob: string): string | null {
   return `${m[1]}://${host}/*`;
 }
 
+/** 两个地址是否是同一页面：网站（协议、主机、端口）与路径相同，忽略查询参数、锚点与路径末尾的斜杠 */
+export function samePage(a: string, b: string): boolean {
+  try {
+    const x = new URL(a);
+    const y = new URL(b);
+    const path = (u: URL) => u.pathname.replace(/\/+$/, '') || '/';
+    return x.origin === y.origin && path(x) === path(y);
+  } catch {
+    return false;
+  }
+}
+
+/** 由 URL glob 推出能直接打开的地址：取第一个通配符之前、到最后一个 `/` 为止；协议或主机里有通配符时为 null */
+export function openableUrlOf(glob: string): string | null {
+  const wild = glob.search(/[*?]/);
+  if (wild === -1) return isHttpUrl(glob) ? glob : null;
+  const m = /^https?:\/\/[^/*?]+\//.exec(glob);
+  if (!m) return null;
+  return glob.slice(0, glob.lastIndexOf('/', wild) + 1);
+}
+
+/**
+ * 规则所属的页面：最外层第一个 `open` 步骤的地址（不含占位符时），
+ * 否则由匹配网址推出；都推不出时为 undefined
+ */
+export function entryUrlOf(rule: {
+  steps: readonly { type: string; url?: string }[];
+  match: { urls: readonly string[] };
+}): string | undefined {
+  const open = rule.steps.find((s) => s.type === 'open');
+  if (open?.url && !open.url.includes('{{') && isHttpUrl(open.url)) return open.url;
+  for (const g of rule.match.urls) {
+    const url = openableUrlOf(g);
+    if (url) return url;
+  }
+  return undefined;
+}
+
+function isHttpUrl(s: string): boolean {
+  try {
+    const u = new URL(s);
+    return u.protocol === 'https:' || u.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 export function hostnameOf(url: string): string {
   try {
     return new URL(url).hostname;

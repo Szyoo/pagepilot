@@ -665,6 +665,15 @@ dl.meta {
   font-weight: 700;
   color: var(--text-3);
 }
+.open-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.open-row > .btn {
+  flex: none;
+}
 
 /* flash */
 .flash-wrap {

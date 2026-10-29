@@ -8,7 +8,7 @@ import {
   type StuckView,
 } from '../../shared/rpc';
 import { useAction } from '../../shared/ui/useAction';
-import { startRule } from './actions';
+import { openRulePage, startRule } from './actions';
 import {
   describeError,
   failedStepText,
@@ -181,6 +181,14 @@ export function RunCard({
             </Btn>
           </>
         )}
+        <Btn
+          size="sm"
+          disabled={busy}
+          title="切到这条规则所在的标签页，标签页已关闭时打开规则的页面"
+          onClick={() => void act(() => openRulePage(rule?.entryUrl, run.tabId))}
+        >
+          打开页面
+        </Btn>
       </div>
       <ErrorLine>{error}</ErrorLine>
     </article>
