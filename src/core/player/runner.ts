@@ -3,7 +3,7 @@ import type { ErrorCode, StepReport, UplinkBody } from '../../schema/message';
 import type { LocalData } from '../../schema/profile';
 import { type Condition, flattenSteps, type Rule, type Step } from '../../schema/rule';
 import type { ActResult, PrepareResult } from '../../shared/content-api';
-import { hostnameOf, matchesGlob } from '../../shared/glob';
+import { hostnameOf, matchesGlob, samePage } from '../../shared/glob';
 import { describeError, stepLabel } from '../../shared/labels';
 import type { ResolveAction, RunView, StuckView } from '../../shared/rpc';
 import { loadSettings, type Settings } from '../../shared/settings';
@@ -1125,18 +1125,6 @@ export class Runner {
     delete run.needsConfirm;
     await this.persist(ctx);
     return target;
-  }
-}
-
-/** 两个地址是否是同一页面：网站（协议、主机、端口）与路径相同，忽略查询参数、锚点与路径末尾的斜杠 */
-export function samePage(a: string, b: string): boolean {
-  try {
-    const x = new URL(a);
-    const y = new URL(b);
-    const path = (u: URL) => u.pathname.replace(/\/+$/, '') || '/';
-    return x.origin === y.origin && path(x) === path(y);
-  } catch {
-    return false;
   }
 }
 

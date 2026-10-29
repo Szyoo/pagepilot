@@ -17,6 +17,7 @@ import { exportVault, importVault, loadVault, profileValueIndex, saveVault } fro
 import { createBackendAiCache, pickBridge } from '../shared/bridge-discovery';
 import type { CaptureResult, ContentEvent, InspectResult } from '../shared/content-api';
 import { EVENT_MESSAGE } from '../shared/content-api';
+import { entryUrlOf } from '../shared/glob';
 import {
   type BgState,
   type RpcMethod,
@@ -99,7 +100,9 @@ export function startApp(): void {
     if (uid) {
       const auto = new Set(await autoEnabledIds(uid));
       for (const r of await listRules(uid)) {
+        const entryUrl = entryUrlOf(r);
         rules.push({
+          ...(entryUrl ? { entryUrl } : {}),
           id: r.id,
           name: r.name,
           version: r.version,

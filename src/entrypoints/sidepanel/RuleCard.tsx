@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { type RuleView, rpc } from '../../shared/rpc';
 import { INPUT_MODE_LABEL, TRIGGER_LABEL } from '../../shared/ui/components';
 import { useAction } from '../../shared/ui/useAction';
-import { startRule } from './actions';
+import { openRulePage, startRule } from './actions';
 import { requiresText } from './lib';
 import { Badge, Btn, ErrorLine } from './parts';
 
@@ -111,6 +111,16 @@ export function RuleCard({
             <dd>{rule.requires.secret.join('、') || '无'}</dd>
           </div>
         </dl>
+      ) : null}
+      {variant === 'list' && rule.entryUrl ? (
+        <Btn
+          size="sm"
+          disabled={busy}
+          title={rule.entryUrl}
+          onClick={() => void run(() => openRulePage(rule.entryUrl))}
+        >
+          打开页面
+        </Btn>
       ) : null}
       {variant === 'list' ? (
         <button

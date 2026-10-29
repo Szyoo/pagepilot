@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('wxt/browser', async () => (await import('../../helpers/fake-browser')).browserModule);
 
-const { samePage, usesManualHandoff } = await import('../../../src/core/player/runner');
+const { samePage } = await import('../../../src/shared/glob');
+const { usesManualHandoff } = await import('../../../src/core/player/runner');
 
 describe('samePage：open 步骤判断是否已在目标页面', () => {
   it('网站与路径相同即视为同一页面，忽略查询参数、锚点与末尾斜杠', () => {

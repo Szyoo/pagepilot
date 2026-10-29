@@ -13,6 +13,8 @@ export interface RuleView {
   trigger: Rule['trigger'];
   inputMode: Rule['inputMode'];
   matchUrls: string[];
+  /** 规则所属的页面（第一个 open 步骤或匹配网址推出的地址），推不出时省略 */
+  entryUrl?: string;
   requires: Rule['requires'];
   stepCount: number;
   /** 规则（的匹配范围、所需数据、输入方式）是否已被用户确认 */
