@@ -8,8 +8,8 @@
 | `LICENSE` | claude-bridge 的 MIT 许可 |
 | `*.d.ts` | 本项目手写的最小类型声明（只声明用到的部分），不是上游文件 |
 
-- 来源：[claude-bridge](https://github.com/Szyoo/claude-bridge) `v0.12.0`，路径 `src/claude_bridge/static/`
-- 复制日期：2026-10-28
+- 来源：[claude-bridge](https://github.com/Szyoo/claude-bridge) `v0.17.1`，路径 `src/claude_bridge/static/`
+- 复制日期：2026-11-13
 - 许可：MIT（见同目录 `LICENSE`）。`bridge-widget.js` / `bridge-widget.css` 中 Prompt Bar、Voice Pill 等部件移植自
   React Bits（MIT + Commons Clause），图标路径来自 Hugeicons 免费图标（MIT），说明保留在文件内的注释里。
 
