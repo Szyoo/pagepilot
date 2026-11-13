@@ -2,8 +2,8 @@
 //
 // Exports, roughly in layers a host can pick from:
 //   pure helpers   describeTool, sessionSummary, splitTurn, DEFAULT_PREFS, loadPrefs, savePrefs
-//   renderers      renderTurn, renderSteps, renderContextPanel, renderSessionPanel, renderPrefsPanel, applyPrefs, placePopover
-//   composer       parseToken, modelMenuRows, modelLabel, effortState, composerCommands, morphPath, mountVoicePill, startDictation, speechLang
+//   renderers      renderTurn, enhanceTurnImages, renderSteps, renderContextPanel, renderSessionPanel, renderPrefsPanel, applyPrefs, placePopover
+//   composer       mountQueue, parseToken, modelMenuRows, modelLabel, effortState, composerCommands, morphPath, mountVoicePill, startDictation, speechLang
 //   full widget    mountBridgeWidget(el, client, opts) -> { destroy(), openThread(id), refresh(), input }
 // Renderers emit `bridge-*` structural class names; a host either loads bridge-widget.css or skins those classes itself.
 
@@ -356,6 +356,8 @@ export function splitTurn(content, events) {
         break;
       }
       case 'compact': items.push({ kind: 'note', sub: 'compact', text: describeCompact(d), at: 0 }); break;
+      // a message the user sent while this turn ran, handed to Claude mid-turn
+      case 'user_note': items.push({ kind: 'note', sub: 'user', text: d.text || '', files: d.files || [], at: d.at ?? 0 }); break;
       case 'error': items.push({ kind: 'note', sub: 'error', text: d.message || '出错', at: END }); break;
       case 'status':
         if (d.phase === 'legacy_trace') items.push({ kind: 'trace', text: d.text || '', at: END });
@@ -403,11 +405,11 @@ export function splitTurn(content, events) {
 
 const L10N = {
   zh: { thinking: 'Claude 正在思考…', waitingHelper: '等待 helper 接单…', thought: '已思考', stopped: '已中断，用时',
-    markPending: '未开始', markRunning: '进行中', markDone: '已完成', markFailed: '失败', markNoResult: '无结果' },
+    markPending: '未开始', markRunning: '进行中', markDone: '已完成', markFailed: '失败', markNoResult: '无结果', noteUser: '你插话' },
   ja: { thinking: 'Claude が考えています…', waitingHelper: 'helper の応答待ち…', thought: '思考時間', stopped: '中断まで',
-    markPending: '未開始', markRunning: '実行中', markDone: '完了', markFailed: '失敗', markNoResult: '結果なし' },
+    markPending: '未開始', markRunning: '実行中', markDone: '完了', markFailed: '失敗', markNoResult: '結果なし', noteUser: '追加の指示' },
   en: { thinking: 'Claude is thinking…', waitingHelper: 'Waiting for the helper…', thought: 'Thought for', stopped: 'Stopped after',
-    markPending: 'Pending', markRunning: 'In progress', markDone: 'Done', markFailed: 'Failed', markNoResult: 'No result' },
+    markPending: 'Pending', markRunning: 'In progress', markDone: 'Done', markFailed: 'Failed', markNoResult: 'No result', noteUser: 'You added' },
 };
 // Strings of the message area for 'zh' (default) / 'ja' / 'en'; hosts spread this into `strings` (renderTurn) or pass `lang`.
 export const messageStrings = (lang) => L10N[String(lang || 'zh').slice(0, 2).toLowerCase()] || L10N.zh;
@@ -500,6 +502,13 @@ export function stepsHtml(items, opts = {}) {
         + `<div class="bridge-step-body">${esc(text)}${it.truncated ? '\n…（已截断）' : ''}</div></details>`);
     } else if (it.kind === 'trace') {
       out.push(`<details class="bridge-step trace" data-k="${o.key}-r${i}"><summary><i class="bridge-caret"></i><span class="bridge-step-name">执行轨迹</span></summary><div class="bridge-term"><pre class="out">${esc(it.text)}</pre></div></details>`);
+    } else if (it.kind === 'note' && it.sub === 'user') {
+      const files = (it.files || []).map((f) => {
+        const u = o.fileUrl?.(f.id);
+        return u ? `<a href="${esc(u)}" target="_blank" rel="noopener" data-bridge-img title="${esc(f.name || '查看原图')}"><img src="${esc(u)}" alt="${esc(f.name || '图片')}" loading="lazy"></a>` : '';
+      }).join('');
+      out.push(`<div class="bridge-note user"><span class="bridge-note-who">${esc(o.S?.noteUser || '插话')}</span>`
+        + (files ? `<div class="bridge-files">${files}</div>` : '') + (it.text ? `<div class="bridge-note-text">${esc(it.text)}</div>` : '') + '</div>');
     } else if (it.kind === 'note') {
       out.push(`<div class="bridge-note${it.sub === 'error' ? ' error' : ''}">${esc(it.text)}</div>`);
     }
@@ -587,7 +596,7 @@ export function renderTurn(el, m, opts = {}) {
   if (m.role === 'user') {
     const files = (m.files || []).map((f) => {
       const u = o.fileUrl?.(f.id);
-      return u ? `<a href="${esc(u)}" target="_blank" rel="noopener" title="${esc(f.name || '查看原图')}"><img src="${esc(u)}" alt="${esc(f.name || '图片')}" loading="lazy"></a>`
+      return u ? `<a href="${esc(u)}" target="_blank" rel="noopener" data-bridge-img title="${esc(f.name || '查看原图')}"><img src="${esc(u)}" alt="${esc(f.name || '图片')}" loading="lazy"></a>`
         : '<span class="bridge-file-ph">[图片]</span>';
     }).join('');
     body = (files ? `<div class="bridge-files">${files}</div>` : '') + (m.content ? `<div class="bridge-user-text">${esc(m.content)}</div>` : '');
@@ -600,7 +609,7 @@ export function renderTurn(el, m, opts = {}) {
     const segs = splitTurn(m.content || '', m.events || []);
     body = segs.map((s, i) => s.kind === 'text'
       ? `<div class="bridge-md">${o.markdown(s.text)}</div>`
-      : `<div class="bridge-steps">${stepsHtml(s.items, { streaming, open: o.open, key: `s${i}`, expected: o.expected, strings: S, now: o.now })}</div>`).join('');
+      : `<div class="bridge-steps">${stepsHtml(s.items, { streaming, open: o.open, key: `s${i}`, expected: o.expected, strings: S, now: o.now, fileUrl: o.fileUrl })}</div>`).join('');
     const think = latticeHtml(turnTiming(m, o.now), S, o.now);
     if (streaming && !segs.length) body = `<div class="bridge-wait">${think}</div>`;
     else if (think) body = `<div class="bridge-think-row">${think}</div>` + body;
@@ -1387,6 +1396,61 @@ export function startDictation({ lang, transcribe = null, stream = null, write, 
     try { rec.stop(); } catch { /* ignore */ } setTimeout(finish, 2500); } };
 }
 
+// Image viewer for turns drawn by renderTurn: a click on a sent image calls `openImage(items, start, link)` with every
+// image of that message (items: [{ src, alt }]); a click with a modifier key keeps the plain link (new tab).
+// mountBridgeWidget does this itself when given `openImage`; hosts that call renderTurn directly call this on their
+// message list. Returns a function that removes the listener.
+export function enhanceTurnImages(root, openImage) {
+  const onClick = (e) => {
+    const a = e.target.closest?.('.bridge-files a[data-bridge-img]');
+    if (!a || !root.contains(a) || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const links = [...a.closest('.bridge-files').querySelectorAll('a[data-bridge-img]')];
+    e.preventDefault();
+    openImage(links.map((l) => ({ src: l.href, alt: l.querySelector('img')?.alt || undefined })), links.indexOf(a), a);
+  };
+  root.addEventListener('click', onClick);
+  return () => root.removeEventListener('click', onClick);
+}
+
+// ---------- queue: messages sent while Claude is answering ----------
+export const QUEUE_STRINGS = { queueNow: '立即发送', queueSend: '发送', queueBack: '撤回', queueDelivered: '已交给 Claude',
+  queueBusy: (n) => `排队 ${n} 条 · Claude 会在下一步读到`, queueIdle: (n) => `${n} 条还没发出`, queueInterrupting: '正在中断当前回答…',
+  queueNowHint: '停止当前回答（已做的保留），马上回复排队的消息', busyPlaceholder: 'Claude 正在回答，可以接着输入，会在下一步读到…', image: '图片' };
+// The strip above a composer listing what was sent with `client.send(text, { queue: true })` while a turn ran.
+// Feed it the snapshot's `queue` and every `onQueue` frame: `update(items, busy)`. Buttons: 立即发送 (sendQueueNow) and
+// 撤回 (removeQueued → onRestore(text, files), to put the text back in the input). opts: { thread(): id, onRestore,
+// onError(message), strings }. Uses the .bridge-queue* styles of bridge-widget.css.
+export function mountQueue(el, client, opts = {}) {
+  const S = { ...QUEUE_STRINGS, ...opts.strings };
+  el.classList.add('bridge-queue');
+  const update = (items = [], busy = false) => {
+    el.hidden = !items.length;
+    if (!items.length) { el.innerHTML = ''; return; }
+    const urgent = items.some(i => i.urgent);
+    const head = urgent ? S.queueInterrupting : busy ? S.queueBusy(items.length) : S.queueIdle(items.length);
+    el.innerHTML = `<div class="bridge-queue-head"><span>${esc(head)}</span>`
+      + (urgent ? '' : `<button type="button" class="bridge-btn bridge-tiny" data-q="now"${busy ? ` title="${esc(S.queueNowHint)}"` : ''}>${esc(busy ? S.queueNow : S.queueSend)}</button>`)
+      + '</div>' + items.map(i => `<div class="bridge-queue-item" data-id="${Number(i.id)}"><span class="t">${esc(i.text || '')}`
+        + (i.files?.length ? `<span class="n">${esc(`${i.files.length} ${S.image}`)}</span>` : '') + '</span>'
+        // delivered: already written to Claude (it reads it after the current step) — can't be taken back
+        + (i.delivered ? `<span class="s">${esc(S.queueDelivered)}</span>`
+          : `<button type="button" class="bridge-btn bridge-tiny" data-q="back" title="${esc(S.queueBack)}">${esc(S.queueBack)}</button>`) + '</div>').join('');
+  };
+  const onClick = async (e) => {
+    const b = e.target.closest('[data-q]'); const thread = opts.thread?.();
+    if (!b || !thread) return;
+    e.stopPropagation();
+    b.disabled = true;
+    try {
+      if (b.dataset.q === 'now') { await client.sendQueueNow(thread); return; }
+      const r = await client.removeQueued(thread, Number(b.closest('.bridge-queue-item')?.dataset.id));
+      opts.onRestore?.(r.item?.text || '', r.item?.files || []);
+    } catch (err) { opts.onError?.(err.message); b.disabled = false; }
+  };
+  el.addEventListener('click', onClick);
+  return { update, destroy: () => el.removeEventListener('click', onClick) };
+}
+
 // ============================================================
 // Reference widget
 // ============================================================
@@ -1402,6 +1466,7 @@ export function mountBridgeWidget(el, client, opts = {}) {
     rename: '重命名', pin: '置顶', unpin: '取消置顶', del: '删除对话', delConfirm: '删除这个对话？消息记录会一起删除。', delArm: '再点一次确认删除', renameLabel: '对话标题', save: '保存', cancel: '取消', stop: '停止', me: '我', assistant: 'Claude',
     ctx: '自动带背景', send: '发送', voice: '语音输入', listening: '正在听…', attach: '添加图片或来源', image: '图片', imageHint: '从本机选择，也可以粘贴或拖进来',
     model: '模型', effort: '思考深度', effortDefault: '默认', faster: '更快', smarter: '更聪明', effortHelp: '越深想得越久再回答；「默认」跟随 helper 的 claude 配置',
+    queue: '排队发送', busyPlaceholder: QUEUE_STRINGS.busyPlaceholder,
     noMatch: '没有匹配', compactArm: '再点一次确认压缩', compactWarn: 'Claude 会把这段对话的历史压缩成摘要：细节会丢失，但上下文会明显变小。', ...o.strings };
   // voice input: on unless the host says `voice: false`; shown only where it can work (Web Speech, or the host's transcriber)
   const voiceCfg = o.voice === false ? null : (o.voice && typeof o.voice === 'object' ? o.voice : {});
@@ -1428,6 +1493,7 @@ export function mountBridgeWidget(el, client, opts = {}) {
           <div class="bridge-grip" title="拖动调整输入框高度，双击恢复自动"></div>
           <div class="bridge-pb-menu" id="${menuId}" hidden></div>
           <canvas class="bridge-pb-sparks" aria-hidden="true"></canvas>
+          <div class="bridge-queue" hidden></div>
           <div class="bridge-tray" hidden></div>
           <textarea class="bridge-input" rows="1" placeholder="${esc(o.placeholder)}" aria-label="${esc(o.placeholder)}" aria-controls="${menuId}" aria-autocomplete="list"></textarea>
           <div class="bridge-bar">
@@ -1455,9 +1521,10 @@ export function mountBridgeWidget(el, client, opts = {}) {
 
   const $ = (sel) => el.querySelector(sel);
   const list = $('.bridge-list'), input = $('.bridge-input'), sendBtn = $('.bridge-send'), pill = $('[data-act="ctx"]');
+  if (o.openImage) enhanceTurnImages(list, o.openImage);
   const form = $('.bridge-form'), pbMenu = $('.bridge-pb-menu'), fileInput = $('.bridge-file'), plusBtn = $('[data-pb="plus"]');
   let voice = null;      // Voice Pill api (set up with the composer below)
-  const state = { thread: null, threadRow: null, msgs: new Map(), order: [], sub: null, inflight: null, settings: null, raf: null, dirty: new Set(), ctxBusy: false, agent: null, job: null, ticker: null };
+  const state = { thread: null, threadRow: null, msgs: new Map(), order: [], sub: null, inflight: null, queue: [], settings: null, raf: null, dirty: new Set(), ctxBusy: false, agent: null, job: null, ticker: null };
   // the ＋ button opens the file picker itself (or the sources menu when the host gave sources), so no `button` here
   const att = mountAttachments({
     input: fileInput, tray: $('.bridge-tray'), textarea: input, dropZone: form, client,
@@ -1479,8 +1546,19 @@ export function mountBridgeWidget(el, client, opts = {}) {
   function setPending(on) {
     state.inflight = on ? state.inflight : null;
     syncSend();
-    if (!voice?.listening) input.placeholder = on ? 'Claude 正在回答，稍等…' : placeholder();
+    if (!voice?.listening) input.placeholder = on ? S.busyPlaceholder : placeholder();
+    renderQueue();
   }
+
+  // messages sent while Claude is answering: handed to the running turn at its next step, or answered next
+  const queue = mountQueue(el.querySelector('.bridge-queue'), client, {
+    thread: () => state.thread, strings: S, onError: (m) => toast(m, true),
+    onRestore: (text, files) => {
+      if (text) { input.value = input.value.trim() ? `${text}\n${input.value}` : text; autoGrow(); syncSend(); input.focus({ preventScroll: true }); }
+      if (files.length) toast('图片没法放回输入框，需要的话重新添加');
+    },
+  });
+  function renderQueue() { queue.update(state.queue, !!state.inflight); }
 
   function usePrefs(key) {
     applyPrefs(root, prefs);
@@ -1552,6 +1630,7 @@ export function mountBridgeWidget(el, client, opts = {}) {
     state.job = (snap.jobs || []).find(j => j.kind === 'compact') || (snap.jobs || [])[0] || null;
     if (!snap.messages.length) list.innerHTML = `<div class="bridge-empty">${esc(S.empty)}</div>`;
     for (const m of snap.messages) upsert(m);
+    state.queue = snap.queue || [];
     state.inflight = snap.inflight;
     setPending(!!snap.inflight);
     $('.bridge-title').textContent = snap.thread?.title || S.threadTitle;
@@ -1588,6 +1667,7 @@ export function mountBridgeWidget(el, client, opts = {}) {
           else if (j.status !== 'done') toast(`压缩失败：${j.error || ''}`, true);
         } else if (j.status !== 'done') toast(`刷新构成失败：${j.error || ''}`, true);
       },
+      onQueue: (q) => { if (q.thread === state.thread) { state.queue = q.items || []; renderQueue(); } },
       onFallback: (on) => renderAgent(null, on),
       onError: (err) => { // transport errors repeat every poll while the server is down; say it once in a while
         const now = Date.now();
@@ -1668,7 +1748,8 @@ export function mountBridgeWidget(el, client, opts = {}) {
     sendBtn.disabled = true;
     try {
       const files = att.ids();
-      const r = await client.send(text, state.thread ? { thread: state.thread, files } : { scope: o.scope, files });
+      // queue: still answering → the server holds it (renderQueue shows it) instead of refusing
+      const r = await client.send(text, state.thread ? { thread: state.thread, files, queue: true } : { scope: o.scope, files, queue: true });
       input.value = ''; autoGrow(); att.clear(); closeMenu(); cp.dismissed = false;
       if (r.thread !== state.thread) subscribe(r.thread);
     } catch (e) { toast(e.message, true); }
@@ -1703,15 +1784,18 @@ export function mountBridgeWidget(el, client, opts = {}) {
   };
 
   function syncSend() {
+    // three faces: 发送 · 排队发送 (answering, something typed) · 停止 (answering, nothing typed)
     const busy = !!state.inflight;
     const can = !!input.value.trim() || att.count() > 0;
+    const stop = busy && !can;
     const armed = busy || can;
     if (armed) sendBtn.dataset.armed = ''; else delete sendBtn.dataset.armed;
-    sendBtn.disabled = !armed || (!busy && att.busy());
-    const label = busy ? S.stop : S.send;
+    sendBtn.disabled = !armed || (can && att.busy());
+    sendBtn.dataset.mode = stop ? 'stop' : busy ? 'queue' : 'send';
+    const label = stop ? S.stop : busy ? S.queue : S.send;
     sendBtn.title = label; sendBtn.setAttribute('aria-label', label);
     if (busy) form.dataset.busy = ''; else delete form.dataset.busy;
-    if (busy !== cp.busy) { cp.busy = busy; morphGlyph(busy ? 1 : 0); }
+    if (stop !== cp.busy) { cp.busy = stop; morphGlyph(stop ? 1 : 0); }
   }
   // arrow ⇄ square with a little squash and tilt halfway (upstream: motion + ease [.77,0,.175,1], 240 ms)
   function morphGlyph(target) {
@@ -2030,10 +2114,10 @@ export function mountBridgeWidget(el, client, opts = {}) {
     });
   }
 
-  form.addEventListener('submit', (e) => { e.preventDefault(); if (state.inflight && e.submitter === sendBtn) return; send(); });
+  form.addEventListener('submit', (e) => { e.preventDefault(); if (sendBtn.dataset.mode === 'stop' && e.submitter === sendBtn) return; send(); });
   sendBtn.addEventListener('click', async (e) => {
-    if (!state.inflight) return;
-    e.preventDefault();       // busy: the same button is 停止
+    if (sendBtn.dataset.mode !== 'stop' || !state.inflight) return;
+    e.preventDefault();       // answering with nothing typed: the same button is 停止
     try { await client.cancel(state.inflight); } catch (err) { toast(err.message, true); }
   });
   sendBtn.addEventListener('pointerdown', (e) => { if (e.button === 0 && sendBtn.dataset.armed != null) sendBtn.dataset.pressed = ''; });
